@@ -1,0 +1,157 @@
+import torch
+import torch.nn as nn
+from torch.autograd import Variable
+import torch.nn.functional as F
+from helpers import *
+
+MIN_LENGTH = 5 
+MAX_LENGTH = 50
+MAX_SAMPLE = False
+MAX_SAMPLE = True
+
+class Encoder(nn.Module):
+    def sample(self, mu, logvar):
+        eps = Variable(torch.randn(mu.size()))
+        if USE_CUDA:
+            eps = eps.cuda()
+        std = torch.exp(logvar / 2.0)
+        return mu + eps * std
+
+# Encoder
+# ------------------------------------------------------------------------------
+
+# Encode into Z with mu and log_var
+
+class EncoderRNN(Encoder):
+    def __init__(self, input_size, hidden_size, output_size, n_layers=1, bidirectional=True):
+        super(EncoderRNN, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.n_layers = n_layers
+        self.bidirectional = bidirectional
+
+        self.embed = nn.Embedding(input_size, hidden_size)
+        self.gru = nn.GRU(hidden_size, hidden_size, n_layers, dropout=0.0, bidirectional=bidirectional)
+        self.o2p = nn.Linear(hidden_size, output_size * 2)
+
+    def forward(self, input):
+        embedded = self.embed(input).unsqueeze(1)
+  #      embedded = self.embed(input).view(input.shape[1], 1, -1) #[seq_len, batch, emb_size]
+
+        output, hidden = self.gru(embedded, None)
+        output = output[-1] # Take only the last value
+        if self.bidirectional:
+            output = output[:, :self.hidden_size] + output[: ,self.hidden_size:] # Sum bidirectional outputs
+
+        ps = self.o2p(output)
+        mu, logvar = torch.chunk(ps, 2, dim=1)
+        z = self.sample(mu, logvar)
+        return mu, logvar, z
+
+# Decoder
+# ------------------------------------------------------------------------------
+
+# Decode from Z into sequence
+
+class DecoderRNN(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, n_layers=1, dropout_p=0.0):
+        super(DecoderRNN, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.n_layers = n_layers
+
+        self.embed = nn.Embedding(output_size, hidden_size)
+        self.dropout = nn.Dropout(dropout_p)
+        # self.gru = nn.GRU(hidden_size + input_size, hidden_size, n_layers)
+        self.z2h = nn.Linear(input_size, hidden_size)
+        self.gru = nn.GRU(hidden_size + input_size, hidden_size, n_layers, dropout=dropout_p)
+        self.i2h = nn.Linear(hidden_size + input_size, hidden_size)
+        self.h2o = nn.Linear(hidden_size * 2, hidden_size)
+        self.out = nn.Linear(hidden_size + input_size, output_size)
+
+    def sample(self, output, temperature):
+        if MAX_SAMPLE:
+            # Sample top value only
+            top_i = output.data.topk(1)[1][0][0]
+
+        else:
+            # Sample from the network as a multinomial distribution
+            output_dist = output.data.view(-1).div(temperature).exp()
+            top_i = torch.multinomial(output_dist, 1)[0]
+
+        input = Variable(torch.LongTensor([top_i]))
+        if USE_CUDA:
+            input = input.cuda()
+        return input, top_i
+
+    def forward(self, z, inputs, temperature, training=True):
+        n_steps = inputs.size(0)
+        outputs = Variable(torch.zeros(n_steps, 1, self.output_size))
+        if USE_CUDA:
+            outputs = outputs.cuda()
+
+        input = Variable(torch.LongTensor([SOS]))
+        if USE_CUDA:
+            input = input.cuda()
+        hidden = self.z2h(z).unsqueeze(0).repeat(self.n_layers, 1, 1)
+
+        for i in range(n_steps):
+            output, hidden = self.step(i, z, input, hidden, temperature)
+            outputs[i] = output
+
+            coin = random.random()
+            if coin >= 0.5 or not training: #word dropout of 50%, don't use if not training
+                input = inputs[i].unsqueeze(0)
+            else:
+                input = Variable(torch.LongTensor([0])) #replace with unknown
+                if USE_CUDA:
+                    input = input.cuda()
+
+        return outputs.squeeze(1)
+
+    def generate(self, z, n_steps, temperature):
+        outputs = Variable(torch.zeros(n_steps, 1, self.output_size))
+        if USE_CUDA:
+            outputs = outputs.cuda()
+
+        input = Variable(torch.LongTensor([SOS]))
+        if USE_CUDA:
+            input = input.cuda()
+        hidden = self.z2h(z).unsqueeze(0).repeat(self.n_layers, 1, 1)
+
+        for i in range(n_steps):
+            output, hidden = self.step(i, z, input, hidden, temperature)
+            outputs[i] = output
+            input, top_i = self.sample(output, temperature)
+            if top_i == EOS: break
+
+        return outputs.squeeze(1)
+
+    def step(self, s, z, input, hidden, temperature=1.0):
+        # print('[DecoderRNN.step] s =', s, 'z =', z.size(), 'i =', input.size(), 'h =', hidden.size())
+        input = F.relu(self.embed(input))
+        input = torch.cat((input, z), 1)
+        input = input.unsqueeze(0)
+        output, hidden = self.gru(input, hidden)
+        output = output.squeeze(0)
+        output = torch.cat((output, z), 1)
+        output = self.out(output)
+        return output, hidden
+
+# Container
+# ------------------------------------------------------------------------------
+
+class VAE(nn.Module):
+    def __init__(self, encoder, decoder):
+        super(VAE, self).__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+
+    def forward(self, inputs, temperature=1.0, training=True):
+        m, l, z = self.encoder(inputs)
+        decoded = self.decoder(z, inputs, temperature, training)
+        return m, l, z, decoded
+
+
