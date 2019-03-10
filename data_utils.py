@@ -1,9 +1,5 @@
 ################################
-# Data Utils for generating
-# plain old text (The Book Corpus)
-# The input is assumed to be a pretokenized text file
-# with a single sentence per line
-#
+# Objects for storing and iterating over dataset objects
 # Uses texttorch stuff, so make sure thats installed 
 ################################
 import torch 
@@ -23,8 +19,6 @@ PAD_TOK = "<pad>"
 SOS_TOK = "<sos>" #start of sentence
 EOS_TOK = "<eos>" #end of sentence 
 UNK_TOK = "<unk>"
-TUP_TOK = "<TUP>"
-DIST_TOK = "<DIST>" # distractor token for NC task
 
 #These are the values that should be used during evalution to keep things consistent
 MIN_EVAL_SEQ_LEN = 8
@@ -50,8 +44,8 @@ def create_vocab(filename, max_size=None, min_freq=1, savefile=None, specials = 
     count = Counter()
     with open(filename, 'r') as fi:
         for line in fi:
-            for tok in line.split(" "):
-                count.update([tok.rstrip('\n')])
+            for tok in line.replace(",", " ").split(" "):
+                count.update([tok.rstrip('\n').replace('"', '').replace('.','').replace('"', '').replace("!",'')])
 
     voc = Vocab(count, max_size=max_size, min_freq=min_freq, specials=specials)
     if savefile is not None:
@@ -169,8 +163,8 @@ class ExtendableField(ttdata.Field):
 
 
 
-class SentenceDataset(ttdata.Dataset):
-    'Data set which has a single sentence per line'
+class RocStoryDataset(ttdata.Dataset):
+    'CSV containing the full RocStory dataset, used for unsupervised training'
 
     def __init__(self, path, vocab, src_seq_length=50, min_seq_length=8, n_cloze=False, add_eos=True):
 
@@ -208,177 +202,4 @@ class SentenceDataset(ttdata.Dataset):
  
         super(SentenceDataset, self).__init__(examples, fields, filter_pred=filter_pred)
 
-
-#To Use, Create a Vocab object and and pass to a SentenceDataset object
-#Create a torchtext.data.Iterator object with dset, it = torchtext.data.Iterator(dset, batch_size, sort_key=lambda x:len(x.text), sort_within_batch=True, device = -1)
-
-class LMSentenceDataset(ttdata.Dataset):
-    'Data set which has a single sentence per line'
-
-    def __init__(self, path, vocab, src_seq_length=50, add_eos=True, n_cloze=False, min_seq_length=8): # later pass it 
-
-        """
-        everything as above though append BOS to text_field.
-        """
-        text_field = ExtendableField(vocab, init_token=SOS_TOK)
-        if add_eos:
-            target_field = ExtendableField(vocab, eos_token=EOS_TOK)
-        else:
-            target_field = ExtendableField(vocab) # added this for narrative cloze
-
-        fields = [('text', text_field), ('target', target_field)]
-        examples = []
-
-        print("path is {}".format(path))
-        with open(path, 'r') as f:
-            for line in f:
-                text = line
-                #print("text is {}".format(text))
-                if n_cloze:
-                    text = text.split("<TUP>") 
-                    actual_event = text[-1]
-                    text = text[:-1] # ignore the last tuple
-                    text = "<TUP>".join(text)
-                    #print("cloze text is {}".format(text))
-                    # text has t-1 events and target has the t event
-                    examples.append(ttdata.Example.fromlist([text, actual_event], fields)) 
-                else:
-                    examples.append(ttdata.Example.fromlist([text, text], fields)) 
-
-        def filter_pred(example):
-            return len(example.text) <= src_seq_length and len(example.text) >= min_seq_length
-
-        super(LMSentenceDataset, self).__init__(examples, fields, filter_pred=filter_pred)
-
-
-class LMRoleSentenceDataset(ttdata.Dataset):
-    'Data set which has a single sentence per line'
-
-    def __init__(self, path, vocab, path2, vocab2, src_seq_length=50, min_seq_length=8): # later pass it 
-
-        """
-        everything as above though append BOS to text_field.
-        """
-        text_field = ExtendableField(vocab, init_token=SOS_TOK)
-        role_field = ExtendableField(vocab2, init_token=SOS_TOK) 
-        target_field = ExtendableField(vocab, eos_token=EOS_TOK)
- 
-        fields = [('text', text_field), ('target', target_field), ('role', role_field)]
-        examples = []
-
-        print("word path is {}".format(path))
-        print("type path is {}".format(path2))
-
-        with open(path, 'r') as f:
-            with open(path2, 'r') as ft:
-                for line in f:
-                    text = line
-                    role = ft.readline()
-                    #print("text is {}".format(text))
-                    #print("role is {}".format(role))
-                    examples.append(ttdata.Example.fromlist([text, text, role], fields)) 
-
-        def filter_pred(example):
-            return len(example.text) <= src_seq_length and len(example.text) >= min_seq_length
-
-        super(LMRoleSentenceDataset, self).__init__(examples, fields, filter_pred=filter_pred)
-
-
-class NarrativeClozeDataset(ttdata.Dataset):
-    'Data set which has a single sentence per line'
-
-    def __init__(self, path, vocab, src_seq_length=50, min_seq_length=8, easy=False, LM=True): # later pass it 
-
-        """
-        Narrative cloze ranking based on perplexity.
-        text DIST_TOK dist1 TUP_TOK dist2 .. ROLE_TOK 
-        finally actual text and 4 distracted texts 
-        """
-       
-        if LM:
-            # text for LM we add SOS here.
-            actual_field = ExtendableField(vocab, init_token=SOS_TOK) 
-            distract1_field = ExtendableField(vocab, init_token=SOS_TOK)
-            distract2_field = ExtendableField(vocab, init_token=SOS_TOK)
-            distract3_field = ExtendableField(vocab, init_token=SOS_TOK)
-            distract4_field = ExtendableField(vocab, init_token=SOS_TOK)
-            distract5_field = ExtendableField(vocab, init_token=SOS_TOK)
-            # target we add EOS here.
-            actual_field_tgt = ExtendableField(vocab, eos_token=EOS_TOK) 
-            distract1_field_tgt = ExtendableField(vocab, eos_token=EOS_TOK)
-            distract2_field_tgt = ExtendableField(vocab, eos_token=EOS_TOK)
-            distract3_field_tgt = ExtendableField(vocab, eos_token=EOS_TOK)
-            distract4_field_tgt = ExtendableField(vocab, eos_token=EOS_TOK)
-            distract5_field_tgt = ExtendableField(vocab, eos_token=EOS_TOK) 
-        else:
-            # for DAVAE SOS is added later.
-            actual_field = ExtendableField(vocab) 
-            distract1_field = ExtendableField(vocab)
-            distract2_field = ExtendableField(vocab)
-            distract3_field = ExtendableField(vocab)
-            distract4_field = ExtendableField(vocab)
-            distract5_field = ExtendableField(vocab)
-            # target EOS is not added.
-            actual_field_tgt = ExtendableField(vocab)
-            distract1_field_tgt = ExtendableField(vocab)
-            distract2_field_tgt = ExtendableField(vocab)
-            distract3_field_tgt = ExtendableField(vocab)
-            distract4_field_tgt = ExtendableField(vocab)
-            distract5_field_tgt = ExtendableField(vocab)
-
-        fields = [('actual', actual_field), ('actual_tgt', actual_field_tgt), ('dist1', distract1_field),  ('dist1_tgt', distract1_field_tgt), ('dist2', distract2_field),
-                   ('dist2_tgt', distract2_field_tgt), ('dist3', distract3_field),  ('dist3_tgt', distract3_field_tgt), ('dist4', distract4_field),  ('dist4_tgt', distract4_field_tgt), 
-                   ('dist5', distract5_field), ('dist5_tgt', distract5_field_tgt)]
-
-        examples = []
-        
-        with open(path, 'r') as f: 
-            for idx, line in enumerate(f):
-                text = line.strip() 
-                
-                if easy: # EASY narrative cloze task. WONT ADD ROLE FOR THIS AS NOT USED ANYMORE.
-                    """
-                    actual, dists = text.split(DIST_TOK)
-                    actual = actual.strip()
-                    dists = dists.strip()
-                    seed = actual.split(TUP_TOK) 
-                    # data list has full sentences
-                    data_list = [actual, actual]
-                    # distractions 
-                    seed = seed[:-1]
-                    seed = [a.strip() for a in seed]
-                    seed = " ".join(seed)
-                   
-                    for dist in dists.split(TUP_TOK): 
-                        dist = "{} {} {}".format(seed, TUP_TOK, dist.strip()) 
-                        data_list.extend([dist, dist])
-                    """
-
-                else: #HARD narrative cloze task
-                    sents = text.split(DIST_TOK)
-                    assert len(sents) == 6, "Orginal + 5 distractors" 
-
-                    sents = [sent.strip() for sent in sents]
-                    actual = sents[0].strip()
-                    # CHECK 2 again
-                    assert len(actual.split(TUP_TOK)) == 6, "All sentences must have 6 events."
-                    dists = sents[1:]
-                    seed = actual.split(TUP_TOK)[0].strip()
-                    data_list = [actual, actual]
-                    for dist in dists:
-                        dist = "{} {} {}".format(seed, TUP_TOK, dist)
-                        # CHECK 2 again.
-                        assert len(dist.split(TUP_TOK)) == 6, "All sentences must have 6 events."
-                        data_list.extend([dist, dist])
-
-                
-                assert len(data_list) == 12, "6 sentences: text and target so 12."
-                #if idx == 1: print(data_list)
-                examples.append(ttdata.Example.fromlist(data_list, fields)) 
-
-        def filter_pred(example):
-            # at this point SOS hor EOS has not been added  
-            return len(example.actual) <= src_seq_length and len(example.actual) >= min_seq_length
-
-        super(NarrativeClozeDataset, self).__init__(examples, fields, filter_pred=filter_pred)
 
