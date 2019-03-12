@@ -68,7 +68,7 @@ class SLDS(nn.Module):
 
         encoded_sents = self.encode_sentences(input, seq_lens) #[num_sents, batch, encoder dim)
         S_samples, state_logits = sample_switch_posterior(self, encoded_sents)
-        Z_samples, Z_means = sample_hidden_posterior(encoded_sents, S_samples) #[num_sents, batch, hidden_dim]
+        Z_samples, Z_means, prior_means, logvars = sample_hidden_posterior(encoded_sents, S_samples) #[num_sents, batch, hidden_dim]
        
         #Now Evaluate the Liklihood for each sentence
 
@@ -77,7 +77,11 @@ class SLDS(nn.Module):
             logits = self.data_liklihood_factor(input[i,:,:], Z_samples[i]) #logits is [batch, seq, num_classes]
             data_logits.append(logits)
 
+
         data_logits = torch.stack(data_logits, dim=0) #[num_sents, batch, seq, num classes]
+
+        #ALSO NEED TO CALC THE KL DIVERGENCE, AVERAGE ACROSS BATCHES AND SENTENCES, IS CALCED AS
+        #(Z_means - prior_means)^T exp(-logvars) (Z_means-prior_means)
 
         return data_logits, Z_means, state_logits
 
@@ -114,9 +118,10 @@ class SLDS(nn.Module):
             switch_state(Tensor, [batch, num_states]) : a probabilistic vector that sums to one over all states
             encoded_data (Tensor, [batch, encoded_data_size]) - Vector representation of the data X (for example, from an LSTM encoder)
         Ret:
-            (mean, logvar)
+            (mean, logvar, means_prior)
             mean - Tensor [batch, hidden_size]
             logvar - Tensor [batch, hidden_size] (diagonal variance)
+            means_prior - Same shape as means, the prior mean
         """
         means_prior, var_param = self.dynamics_factor(prev_z, switch_state):
 
@@ -124,7 +129,7 @@ class SLDS(nn.Module):
         mean_residual = self.dynamics_posterior_network(network_input)
         means = means_prior + mean_residual #Using the average might be another posibility
 
-        return (means, var_param)
+        return (means, var_param, means_prior)
 
     #Variational Posterior Approximation
     #Q(S_i | X)
@@ -235,21 +240,27 @@ class SLDS(nn.Module):
         num_sents = input.size(0)
         Z_samples = []
         means = []
+        prior_means = []
+        logvars = []
 
         prev_z = Variable(torch.zeros(batch_size, self.hidden_size))
         for i in range(num_sents):
             context_vect = utils.get_context_vector(encoded_sents, i, future=True)
             target_vect = encoded_sents[i, :, :]
             switch_state = S_samples[i]
-            mean, logvar = dynamics_posterior_factor(prev_z, switch_state, torch.cat([target_vect, context_vect], dim=1))
+            mean, logvar, prior_mean = dynamics_posterior_factor(prev_z, switch_state, torch.cat([target_vect, context_vect], dim=1))
             z_sample = utils.normal_sample(mean, logvar)
             Z_samples.append(z_sample)
             means.append(mean)
+            prior_means.append(prior_mean)
+            logvars.append(logvar)
             prev_z = z_sample
 
         Z_samples = torch.stack(Z_samples, dim=0) #[num_sents, batch, hidden]
         means= torch.stack(means, dim=0) #[num_sents, batch, hidden]
-        return Z_samples, means
+        prior_means= torch.stack(prior_means, dim=0) #[num_sents, batch, hidden]
+        logvars= torch.stack(logvars, dim=0) #[num_sents, batch, hidden]
+        return Z_samples, means, prior_means, logvars
 
 
 

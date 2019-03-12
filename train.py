@@ -1,7 +1,5 @@
 ########################################
 #   module for training - incomplete
-#
-#
 ########################################
 import torch 
 import torch.nn as nn
@@ -11,7 +9,7 @@ import numpy as np
 import random
 import math
 from torch.autograd import Variable
-from EncDec import Encoder, Decoder, Attention, fix_enc_hidden, kl_divergence
+from EncDec import Encoder, Decoder
 import torch.nn.functional as F
 import data_utils as du
 from SLDS import SLDS
@@ -31,32 +29,12 @@ def tally_parameters(model):
 
 
 
-def monolithic_compute_loss(iteration, model, target, target_lens, latent_values, latent_root, diff, dec_outputs, use_cuda, args, train=True): 
+def compute_loss(logits, targets): 
     """
     use this function for validation loss. NO backprop in this function.
     """
-    # dec_outputs is [seq_len * batch_size * decoder_hidden*size]
-    # logits is [seq_len * batch_size * vocab_size]
-
-    #sum together means
-    reconstruct= torch.cat([x[1].unsqueeze(dim=0) for x in diff], dim=0)
-    commit = torch.cat([x[0].unsqueeze(dim=0) for x in diff], dim=0)
-    commit2 = torch.cat([x[2].unsqueeze(dim=0) for x in diff[1:]], dim=0)
-
-    # logits is [seq_len * batch_size * vocab_size]
-    logits = model.logits_out(dec_outputs) 
-    logits = logits.transpose(0,1).contiguous() # convert to [batch, seq, vocab]
-
-    if use_cuda:
-        ce_loss = masked_cross_entropy(logits, Variable(target.cuda()), Variable(target_lens.cuda()))
-    else:
-        ce_loss = masked_cross_entropy(logits, Variable(target), Variable(target_lens))
- 
-    loss = ce_loss + args.commit_c*commit.mean() + reconstruct.mean() + args.commit2_c*commit2.mean() 
- 
-    if train:
-        # if training then print stats and return total loss
-        print_iter_stats(iteration, loss, ce_loss, commit, commit2, reconstruct, args, model.latent_root)
+    
+    #print_iter_stats(iteration, loss, ce_loss, commit, commit2, reconstruct, args, model.latent_root)
     
     return loss, ce_loss # tensor 
 
@@ -86,21 +64,13 @@ def check_save_model_path(save_model):
 
 
         
-def classic_train(args):
+def train(args):
     """
     Train the model in the ol' fashioned way, just like grandma used to
     Args
         args (argparse.ArgumentParser)
     """
-    if args.cuda and torch.cuda.is_available():
-        print("Using cuda")
-        use_cuda = True
-    elif args.cuda and not torch.cuda.is_available():
-        print("You do not have CUDA, turning cuda off")
-        use_cuda = False
-    else:
-        use_cuda=False
-
+    
     #Load the data
     print("\nLoading Vocab")
     vocab = du.load_vocab(args.vocab)
@@ -112,9 +82,9 @@ def classic_train(args):
         print("Vectors Loaded")
 
     print("Loading Dataset")
-    dataset = du.SentenceDataset(args.train_data, vocab, args.src_seq_length, add_eos=True) 
+    dataset = du.RocStoryDataset(args.train_data, vocab) 
     print("Finished Loading Dataset {} examples".format(len(dataset)))
-    batches = BatchIter(dataset, args.batch_size, sort_key=lambda x:len(x.text), train=True, sort_within_batch=True, device=-1)
+    batches = du.RocStoryBatches(dataset, args.batch_size, sort_key=lambda x:len(x.text), train=True, sort_within_batch=True, device=-1)
     data_len = len(dataset)
 
     if args.load_model:
@@ -122,10 +92,7 @@ def classic_train(args):
         model = torch.load(args.load_model)
     else:
         print("Creating the Model")
-        bidir_mod = 2 if args.bidir else 1
-        latents = example_tree(args.num_latent_values, (bidir_mod*args.enc_hid_size, args.latent_dim), use_cuda=use_cuda) #assume bidirectional
-        hidsize = (args.enc_hid_size, args.dec_hid_size)
-        model = SLDS(args.emb_size, hidsize, vocab, latents, layers=args.nlayers, use_cuda=use_cuda, pretrained=args.use_pretrained, dropout=args.dropout)
+        model = SLDS() #need to put arguments
 
     #create the optimizer
     if args.load_opt:
@@ -139,18 +106,12 @@ def classic_train(args):
     curr_epoch = 1
     valid_loss = [0.0]
     for iteration, bl in enumerate(batches): #this will continue on forever (shuffling every epoch) till epochs finished
-        batch, batch_lens = bl.text
-        target, target_lens = bl.target 
+        batch, seq_lens = batches.combine_story(batch) #should return batch tensor [num_sents, batch, seq_len] and seq_lens [num_sents, batch]
 
-        if use_cuda:
-            batch = Variable(batch.cuda())
-        else:
-            batch = Variable(batch)
 
         model.zero_grad()
-        latent_values, latent_root, diff, dec_outputs = model(batch, batch_lens)
-        # train set to True so returns total loss
-        loss, _ = monolithic_compute_loss(iteration, model, target, target_lens, latent_values, latent_root, diff, dec_outputs, use_cuda, args=args)
+        logits = model(batch, seq_lens)
+        loss, _ = monolithic_compute_loss(logits)
  
         # backward propagation
         loss.backward()
@@ -162,29 +123,8 @@ def classic_train(args):
         # End of an epoch - run validation
         if ((args.batch_size * iteration) % data_len == 0 or iteration % args.validate_after == 0) and iteration != 0:
             print("\nFinished Training Epoch/iteration {}/{}".format(curr_epoch, iteration))
+            #PUT VALIDATION CODE IN HERE
 
-            # do validation
-            print("Loading Validation Dataset.")
-            val_dataset = du.SentenceDataset(args.valid_data, vocab, args.src_seq_length, add_eos=True) 
-            print("Finished Loading Validation Dataset {} examples.".format(len(val_dataset)))
-            val_batches = BatchIter(val_dataset, args.batch_size, sort_key=lambda x:len(x.text), train=False, sort_within_batch=True, device=-1)
-            valid_loss = 0.0
-            for v_iteration, bl in enumerate(val_batches):
-                batch, batch_lens = bl.text
-                target, target_lens = bl.target
-                batch_lens = batch_lens.cpu()
-                if use_cuda:
-                    batch = Variable(batch.cuda(),volatile=True)
-                else:
-                    batch = Variable(batch, volatile=True)
-
-                latent_values, latent_root, diff, dec_outputs = model(batch, batch_lens) 
-                # train set to False so returns only CE loss
-                loss, ce_loss = monolithic_compute_loss(iteration, model, target, target_lens, latent_values, latent_root, diff, dec_outputs, use_cuda, args=args, train=False)
-                valid_loss = valid_loss + ce_loss.data.clone()
-
-            valid_loss = valid_loss/(v_iteration+1)   
-            print("**Validation loss {:.2f}.**\n".format(valid_loss[0]))
 
             # Check max epochs and break
             if (args.batch_size * iteration) % data_len == 0:
@@ -197,8 +137,8 @@ def classic_train(args):
         if iteration % args.save_after == 0 and iteration != 0: 
             print("Saving checkpoint for epoch {} at {}.\n".format(curr_epoch, args.save_model))
             # curr_epoch and validation stats appended to the model name
-            torch.save(model, "{}_{}_{}_.epoch_{}.loss_{:.2f}.pt".format(args.save_model, args.commit_c, args.commit2_c,curr_epoch, float(valid_loss[0])))
-            torch.save(optimizer, "{}.{}.epoch_{}.loss_{:.2f}.pt".format(args.save_model, "optimizer", curr_epoch, float(valid_loss[0])))
+            torch.save(model)
+            torch.save(optimizer)
 
 
 

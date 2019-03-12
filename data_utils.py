@@ -6,9 +6,12 @@ import torch
 import torch.nn as nn
 import numpy as np
 import math
+import csv
+import spacy
 import pickle
 from torch.utils.data import Dataset, DataLoader
 from torch.autograd import Variable
+import torch.nn.functional as F
 import torchtext.data as ttdata
 import torchtext.datasets as ttdatasets
 from torchtext.vocab import Vocab
@@ -41,11 +44,16 @@ def create_vocab(filename, max_size=None, min_freq=1, savefile=None, specials = 
         specials (list) : list of special tokens 
     returns Vocab object
     """
+    nlp = spacy.load('en')
     count = Counter()
     with open(filename, 'r') as fi:
-        for line in fi:
-            for tok in line.replace(",", " ").split(" "):
-                count.update([tok.rstrip('\n').replace('"', '').replace('.','').replace('"', '').replace("!",'')])
+        csv_file = csv.reader(fi)
+        for line in csv_file:
+            string = " ".join(line[2:])
+            tokens = nlp.tokenizer(string)
+#            for tok in line.replace(",", " ").split(" "):
+#                count.update([tok.rstrip('\n').replace('"', '').replace('.','').replace('"', '').replace("!",'')])
+            count.update([x.text for x in tokens])
 
     voc = Vocab(count, max_size=max_size, min_freq=min_freq, specials=specials)
     if savefile is not None:
@@ -162,44 +170,65 @@ class ExtendableField(ttdata.Field):
         return arr
 
 
+class RocStoryBatches(ttdata.Iterator):
 
+    def combine_story(self, batch, pad_id=1):
+        """
+        Convert a batch (output from iterating over iterator) into an output 
+        of the form Tensor [num_sents, batch, seqlen], this can be input directly into model
+        
+        returns:
+            batch (Tensor, [num_sents, batch, seq_len]) : Tensor of input ids for the embeddings lookup
+            seq_lens (Tensor [num_sents, batch]) : Store the sequence lengths for each batch for packing
+
+        NOT COMPLETE
+        """
+        s1, s1_len = batch.sent_1 #s1 will be a Tensor [batch, seq_len], s1_len is Tensor of size [batch_size]
+        s2, s2_len = batch.sent_2
+        s3, s3_len = batch.sent_3
+        s4, s4_len = batch.sent_4
+        s5, s5_len = batch.sent_5
+        seq_lens = torch.stack([s1_len, s2_len, s3_len, s4_len, s5_len], dim=0)
+        
+        max_len = torch.max(seq_lens)
+
+        #THIS NEEDS TO BE COMPLETED
+        #F.pad(seq, pad=(0,0,0 2), mode='constant', value=pad_id) #can use this pad function
+        #Need to pad everything to be the length of the largest sentence in the batch
+        return seq_lens
+
+
+#THIS IS DONE
 class RocStoryDataset(ttdata.Dataset):
     'CSV containing the full RocStory dataset, used for unsupervised training'
 
-    def __init__(self, path, vocab, src_seq_length=50, min_seq_length=8, n_cloze=False, add_eos=True):
+    def __init__(self, path, vocab):
 
         """
         Args
-            path (str) : Filename of text file with dataset
+            path (str) : Filename of RocStory CSV
             vocab (Torchtext Vocab object)
-            filter_pred (callable) : Only use examples for which filter_pred(example) is TRUE
         """
-        text_field = ExtendableField(vocab)
 
-        if add_eos:
-            target_field = ExtendableField(vocab, eos_token=EOS_TOK)
-        else:
-            target_field = ExtendableField(vocab) # added this for narrative cloze
+        sent_1 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        sent_2 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        sent_3 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        sent_4 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        sent_5 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
        
-        fields = [('text', text_field), ('target', target_field)]
+        fields = [('sent_1', sent_1), ('sent_2', sent_2),('sent_3', sent_3),('sent_4', sent_4),('sent_5', sent_5)]
         examples = []
         with open(path, 'r') as f:
-            for line in f:
-                text = line
-                if n_cloze:
-                    text = text.split("<TUP>") 
-                    actual_event = text[-1] #last event
-                    text = text[:-1] # ignore the last tuple
-                    text = "<TUP>".join(text)
-                    #print("cloze text is {}".format(text))
-                    # text has t-1 events and target has the t event
-                    examples.append(ttdata.Example.fromlist([text, actual_event], fields))
-                else:
-                    examples.append(ttdata.Example.fromlist([text, text], fields))
+            csv_file = csv.reader(f)
+            #Line format is id, title, sent1, sent2, sent3, sent4, sent5
+            for i, line in enumerate(csv_file):
+                if i == 0:
+                    continue
+                
+                s1, s2, s3, s4, s5 = line[2:]
+                examples.append(ttdata.Example.fromlist([s1, s2, s3, s4, s5], fields))
 
-        def filter_pred(example):
-            return len(example.text) <= src_seq_length and len(example.text) >= min_seq_length
  
-        super(SentenceDataset, self).__init__(examples, fields, filter_pred=filter_pred)
+        super(RocStoryDataset, self).__init__(examples, fields)
 
 
