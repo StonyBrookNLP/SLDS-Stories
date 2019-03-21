@@ -192,10 +192,16 @@ class RocStoryBatches(ttdata.Iterator):
         
         max_len = torch.max(seq_lens)
 
-        #THIS NEEDS TO BE COMPLETED
-        #F.pad(seq, pad=(0,0,0 2), mode='constant', value=pad_id) #can use this pad function
-        #Need to pad everything to be the length of the largest sentence in the batch
-        return seq_lens
+        sents = [s1, s2, s3, s4, s5]
+
+        for i in range(len(sents)):
+            curr_len = sents[i].shape[1]
+            pad_len = max_len - curr_len
+            sents[i] = F.pad(sents[i], (0, pad_len), mode='constant', value=pad_id)
+
+        sents = torch.stack(sents, dim=0)
+
+        return sents, seq_lens
 
 
 #THIS IS DONE

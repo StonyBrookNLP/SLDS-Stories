@@ -87,12 +87,13 @@ def train(args):
     batches = du.RocStoryBatches(dataset, args.batch_size, sort_key=lambda x:len(x.text), train=True, sort_within_batch=True, device=-1)
     data_len = len(dataset)
 
+
     if args.load_model:
         print("Loading the Model")
         model = torch.load(args.load_model)
     else:
         print("Creating the Model")
-        model = SLDS() #need to put arguments
+        model = SLDS(args.hidden_size, args.emb_size, vocab, test_trans_matrix) #need to put arguments
 
     #create the optimizer
     if args.load_opt:
@@ -148,10 +149,9 @@ if __name__ == "__main__":
     parser.add_argument('--train_data', type=str)
     parser.add_argument('--valid_data', type=str)
     parser.add_argument('--vocab', type=str, help='the vocabulary pickle file')
+    parser.add_argument('--hidden_size', type=int, default=300, help='size of hidden state Z')
     parser.add_argument('--emb_size', type=int, default=300, help='size of word embeddings')
-    parser.add_argument('--enc_hid_size', type=int, default=512, help='size of encoder hidden')
-    parser.add_argument('--dec_hid_size', type=int, default=512, help='size of encoder hidden')
-    parser.add_argument('--nlayers', type=int, default=1, help='number of layers')
+    parser.add_argument('--layers', type=int, default=2, help='number of layers')
     parser.add_argument('--lr', type=float, default=0.0005, help='initial learning rate')
     parser.add_argument('--log_every', type=int, default=200)
     parser.add_argument('--save_after', type=int, default=500)

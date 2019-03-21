@@ -11,34 +11,50 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 import utils
 from EncDec import Encoder, Decoder, gather_last
+from data_utils import EOS_TOK, SOS_TOK, PAD_TOK
 
 
 class SLDS(nn.Module):
-    def __init__(self, hidden_size, trans_matrix):
+    def __init__(self, hidden_size, embd_size, vocab, trans_matrix, layers=2, pretrained=False, dropout=0.0, use_cuda=False):
             """
             For NOW, Only supporting GRU with 1 layer
             Args:
                 hidden_size (int) : size of hidden vector z 
+                embd_size (int) : size of word embeddings
+                vocab (torchtext.Vocab) : vocabulary object
                 trans_matrix (Tensor, [num states, num states]) : Transition matrix probs for switching markov chain
-            
+                pretrained (bool) : use pretrained word embeddings?
 
             """
             super(SLDS, self).__init__()
-            self.hidden_size = hidden_size
+            self.hidden_size = self.dec_hsize = hidden_size
             self.encoded_data_size = 2*hidden_size #Vector size to use whenever encoding text into a %&#ing vector
             self.trans_matrix = trans_matrix
             self.num_states = trans_matrix.shape[0]
+            self.embd_size=embd_size
+            self.layers = layers
+            
+            self.vocab_size=len(vocab.stoi.keys())
+            self.sos_idx = vocab.stoi[SOS_TOK]
+            self.eos_idx = vocab.stoi[EOS_TOK]
+            self.pad_idx = vocab.stoi[PAD_TOK]
 
             in_embedding = nn.Embedding(self.vocab_size, self.embd_size, padding_idx=self.pad_idx)
             out_embedding = nn.Embedding(self.vocab_size, self.embd_size, padding_idx=self.pad_idx)
 
+            if pretrained:
+                print("Using Pretrained")
+                in_embedding.weight.data = vocab.vectors
+                out_embedding.weight.data = vocab.vectors
+
+
             self.dynamics_mean = nn.ModuleList([nn.Linear(self.hidden_size, self.hidden_size, bias=False) for _ in range(self.num_states)])
             #self.dynamics_logvar = nn.ModuleList([nn.Linear(self.hidden_size, self.hidden_size, bias=False) for _ in range(self.num_states)])
-            self.dynamics_logvar = Variable(torch.randn([self.num_states, self.hidden_size])) #diagnol covariance [states, hidden] 
+            self.dynamics_logvar = torch.nn.Parameter(torch.randn([self.num_states, self.hidden_size])) #diagnol covariance [states, hidden] 
 
 
-            self.sentence_encode_rnn= Encoder(self.embd_size, self.encoded_data_size / 2, in_embedding, self.cell_type, self.layers, bidir=True, use_cuda=use_cuda)
-            self.liklihood_rnn= Decoder(self.embd_size, self.dec_hsize, out_embedding, self.cell_type, self.layers, use_cuda=use_cuda, dropout=dropout)
+            self.sentence_encode_rnn= Encoder(self.embd_size, self.encoded_data_size / 2, in_embedding, "GRU", self.layers, bidir=True, use_cuda=use_cuda)
+            self.liklihood_rnn= Decoder(self.embd_size, self.dec_hsize, out_embedding, "GRU", self.layers, use_cuda=use_cuda, dropout=dropout)
             self.liklihood_logits= nn.Linear(self.dec_hsize, self.vocab_size) #Weights to calculate logits, out [batch, vocab_size]
 
             #Variational Parameters
@@ -59,9 +75,9 @@ class SLDS(nn.Module):
             input (Tensor, [num_sents, batch, seq_len]) : Tensor of input ids for the embeddings lookup
             seq_lens (Tensor [num_sents, batch]) : Store the sequence lengths for each batch for packing
         Returns
-            output logits (Tensor, [batch, seq_len, vocab size]) : logits for the output words
-            means
-            state_logits
+            output logits (Tensor, [num_sents, batch, seq_len, vocab size]) : logits for the output words
+            state logits (Tensor, [num_sents, batch, num classes]) : logits for state prediction, can be used for supervision and to calc state KL
+            Z_kl (Tensor, [batch]) : kl diveragence for the Z transitions (calculated for each batch)
         """
         batch_size = input.size(1)
         num_sents = input.size(0)
@@ -77,13 +93,33 @@ class SLDS(nn.Module):
             logits = self.data_liklihood_factor(input[i,:,:], Z_samples[i]) #logits is [batch, seq, num_classes]
             data_logits.append(logits)
 
-
         data_logits = torch.stack(data_logits, dim=0) #[num_sents, batch, seq, num classes]
+        Z_kl = self.z_kl_divergence(Z_means, prior_means, logvars)
 
-        #ALSO NEED TO CALC THE KL DIVERGENCE, AVERAGE ACROSS BATCHES AND SENTENCES, IS CALCED AS
-        #(Z_means - prior_means)^T exp(-logvars) (Z_means-prior_means)
+        return data_logits, state_logits, Z_kl
 
-        return data_logits, Z_means, state_logits
+    def z_kl_divergence(self, Z_means, prior_means, logvars):
+        """
+        Calcuate the kl_devergence for the transition (z) distributions
+        Calculate kl as: 
+        (prior_mean- z_mean)^T exp(-logvars) (prior_means-z_mean)
+        Args
+            z_means, prior_means, logvars (Tensor [num_sents, batch, hidden_dim])
+
+        Return:
+            kl (Tensor [batch_size])
+        """
+        num_sents = Z_means.size(0)
+        batch_size = Z_means.size(1)
+
+        kl = Variable(torch.zeros(batch_size))
+
+        for i in range(num_sents): #Calculate for each sentence
+            diff = prior_means[i] - Z_means[i]
+            diff_squared = diff*diff
+            kl += (1.0/2.0)*torch.diag(torch.matmul(torch.exp(-1*logvars[i]), diff_squared.transpose(0,1)))
+
+        return kl
 
     #P(Z_i | Z_i-1, S_i)
     def dynamics_factor(self, prev_z, switch_state):
@@ -235,6 +271,9 @@ class SLDS(nn.Module):
         Returns
             hidden samples (Tensor, [num_sents, batch, hidden dim]) : samples from postieror dyncamics distribtion
             mean (Tensor, [num_sents, batch, hidden dim]) : mean of posterior (for KL calc)
+            prior mean (Tensor, [num_sents, batch, hidden dim]) : mean of posterior under prior (for KL calc)
+            logvars (Tensor, [num_sents, batch, hidden dim]) : logvars (for KL calc)
+            
         """
         batch_size = input.size(1)
         num_sents = input.size(0)
