@@ -180,8 +180,6 @@ class RocStoryBatches(ttdata.Iterator):
         returns:
             batch (Tensor, [num_sents, batch, seq_len]) : Tensor of input ids for the embeddings lookup
             seq_lens (Tensor [num_sents, batch]) : Store the sequence lengths for each batch for packing
-
-        NOT COMPLETE
         """
         s1, s1_len = batch.sent_1 #s1 will be a Tensor [batch, seq_len], s1_len is Tensor of size [batch_size]
         s2, s2_len = batch.sent_2
@@ -202,6 +200,23 @@ class RocStoryBatches(ttdata.Iterator):
         sents = torch.stack(sents, dim=0)
 
         return sents, seq_lens
+
+    def convert_to_target(self, input, seq_lens):
+        """
+        Convert an input to target (ie just remove the BOS from the start
+        Args:
+            input (tensor, [num_sents, batch, seq_len])
+            seq_lens (Tensor, [num_sents, batch])
+        """
+        num_sents = input.shape[0]
+        targets = []
+        for i in range(num_sents):
+            targets.append(input[i, :, 1:])
+        targets = torch.stack(targets, dim=0)
+        return targets, seq_lens - 1
+
+
+
 
 
 #THIS IS DONE

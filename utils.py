@@ -8,7 +8,7 @@ import math
 from torch.autograd import Variable
 import torch.nn.functional as F
 
-def normal_sample(self, mu, logvar, use_cuda=False):
+def normal_sample(mu, logvar, use_cuda=False):
     """
     Reparmaterization trick for normal distribution
     """ 
@@ -35,7 +35,7 @@ def gumbel_softmax_sample(logits, temp, use_cuda=False):
     y = logits + gumbel_sample(logits.size(), use_cuda=use_cuda)
     return F.softmax(y / temp, dim=1)
 
-def get_context_vector(encoded_sents, target, future=False)
+def get_context_vector(encoded_sents, target, future=False, use_cuda=False):
     """
     Get create the context vector for the sentence given at index target for 
     state classification. Do this by max pooling the sentences before the target sentence
@@ -49,10 +49,11 @@ def get_context_vector(encoded_sents, target, future=False)
 
     if target == 0 and not future:
         #return encoded_target[0, :, :]
-        return torch.zeros(encoded_target[0,:,:].shape)
+        return torch.zeros(encoded_sents[0,:,:].shape).cuda() if use_cuda else torch.zeros(encoded_sents[0,:,:].shape)
     elif target == encoded_sents.shape[0]-1 and future:
         #return encoded_target[encoded_sents.shape[0]-1, :, :]
-        return torch.zeros(encoded_target[0,:,:].shape)
+        return torch.zeros(encoded_sents[0,:,:].shape).cuda() if use_cuda else torch.zeros(encoded_sents[0,:,:].shape)
+
 
     if not future:
         sents = encoded_sents[:target, :, :] #[sents, batch, encoder dim]

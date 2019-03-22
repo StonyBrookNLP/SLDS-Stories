@@ -12,7 +12,7 @@ class EncDecBase(nn.Module):
     def __init__(self, emb_size, hidden_size, embeddings=None, cell_type="GRU", layers=2, bidir=True, use_cuda=True):
             """
             Args:
-                emb_size (int) : size of input embeddings
+                emb_size (int) : size of inputs to rnn
                 hidden_size (int) : size of hidden 
                 embeddings (nn.Module) : Torch module (with same type signatures as nn.Embeddings) to use for embedding
                 cell_type : LSTM or GRU
@@ -69,6 +69,7 @@ class Encoder(EncDecBase):
             packed_out, hidden = self.rnn(packed_input, hidden)
             enc_out, _ = pad_packed_sequence(packed_out)
         else:
+            #self.rnn.flatten_parameters()
             enc_out, hidden = self.rnn(out, hidden)
 
         return enc_out.transpose(0,1), hidden #return enc_out as batch, seq_len, hidden_dim
@@ -77,6 +78,7 @@ class Encoder(EncDecBase):
 class Decoder(EncDecBase):
 
     def __init__(self, emb_size, hidden_size, embeddings=None, cell_type="GRU", layers=1, use_cuda=False, dropout=0.0):
+        bidir=False
         super(Decoder, self).__init__(emb_size, hidden_size, embeddings, cell_type, layers, bidir, use_cuda) 
         
         if dropout > 0:
@@ -85,13 +87,14 @@ class Decoder(EncDecBase):
         else:
             self.drop = None
 
-    def forward(self, input, hidden):
+    def forward(self, input, hidden, concat=None):
         """
         Run a SINGLE computation step
         Update the RNN state
         Args:
             input (Tensor, [batch]) : Tensor of input ids for the embeddings lookup (one per batch since its done one at a time)
             hidden (Tuple(FloatTensor)) : (h, c) if LSTM, else just h, previous state
+            concat (Tensor, [batch, hidden_size]) : optional item to concatenate to the input at this time step
 
         Returns:
             output (Tensor, [batch, hidden_dim]) : output for current time step (hidden state of last layer)
@@ -101,10 +104,14 @@ class Decoder(EncDecBase):
         if self.drop is None:
             out = self.embeddings(input).unsqueeze(dim=0) #[seq_len=1, batch, emb_size]
         else:
-            out = self.drop(self.embeddings(input).unsqueeze(dim=0)
+            out = self.drop(self.embeddings(input).unsqueeze(dim=0))
 
-        dec_input = out
-        self.rnn.flatten_parameters()
+        if concat is None:
+            dec_input = out
+        else:
+            dec_input = torch.cat([out.squeeze(0), concat], dim=1).unsqueeze(dim=0) #[1, batch, emb_size + hidden_size]
+
+        #self.rnn.flatten_parameters()
         rnn_output, hidden = self.rnn(dec_input, hidden) #rnn_output is hidden state of last layer, hidden is for all layers (gets passed for next tstep)
         #rnn_output dim is [1, batch, hidden_size]
         rnn_output=torch.squeeze(rnn_output, dim=0)

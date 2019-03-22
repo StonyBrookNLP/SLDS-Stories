@@ -21,7 +21,7 @@ def _sequence_mask(sequence_length, max_len=None):
                          .expand_as(seq_range_expand))
     return seq_range_expand < seq_length_expand
 
-def masked_cross_entropy(logits, target, length, shard=False):
+def masked_cross_entropy(logits, target, length, use_cuda=True):
     """
     Args:
         logits: A Variable containing a FloatTensor of size
@@ -51,12 +51,19 @@ def masked_cross_entropy(logits, target, length, shard=False):
     losses = losses_flat.view(*target.size())
     #print("losses {}".format(losses.size))
     # mask: (batch, max_len)
-    mask = _sequence_mask(sequence_length=length, max_len=target.size(1)) 
+    if use_cuda:
+        mask = _sequence_mask(sequence_length=length, max_len=target.size(1)).cuda()
+    else:
+        mask = _sequence_mask(sequence_length=length, max_len=target.size(1)) 
     #print("mask {}".format(mask))
     losses = losses * mask.float()
     #print("losses {}".format(losses))
     loss = losses.sum() 
-    if shard:
-        return loss, length.float().sum() # changed it to return loss and length
+
+#    if shard:
+#        return loss, length.float().sum() # changed it to return loss and length
+
+    if use_cuda:
+        return loss / length.cuda().float().sum() # average loss 
     else:
         return loss / length.float().sum() # average loss 
