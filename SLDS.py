@@ -40,8 +40,6 @@ class SLDS(nn.Module):
             self.eos_idx = vocab.stoi[EOS_TOK]
             self.pad_idx = vocab.stoi[PAD_TOK]
 
-#            in_embedding = nn.Embedding(self.vocab_size, self.embd_size, padding_idx=self.pad_idx).cuda()
-#            out_embedding = nn.Embedding(self.vocab_size, self.embd_size, padding_idx=self.pad_idx).cuda()
             in_embedding = nn.Embedding(self.vocab_size, self.embd_size, padding_idx=self.pad_idx)
             out_embedding = nn.Embedding(self.vocab_size, self.embd_size, padding_idx=self.pad_idx)
 
@@ -218,6 +216,8 @@ class SLDS(nn.Module):
         network_input = torch.cat((prev_z, encoded_data), dim=1) 
         mean_residual = self.dynamics_posterior_network(network_input)
         means = means_prior + mean_residual #Using the average might be another posibility
+        #means = mean_residual #Using the average might be another posibility
+        #means = (means_prior + mean_residual)/2 #Using the Average!
 
         return (means, var_param, means_prior)
 
@@ -306,7 +306,7 @@ class SLDS(nn.Module):
         return encoded_sents
 
 
-    def sample_switch_posterior(self, encoded_sents, gumbel_temp=1.0):
+    def sample_switch_posterior(self, encoded_sents, gumbel_temp=0.75):
         """
         Sample the switching state posterior given the encoded data
         Args
@@ -332,12 +332,13 @@ class SLDS(nn.Module):
         return S_samples, logit_list
 
 
-    def sample_hidden_posterior(self, encoded_sents, S_samples):
+    def sample_hidden_posterior(self, encoded_sents, S_samples, sample_from_prior=False):
         """
         Sample the hidden state Z posterior given the encoded data
         Args
             encoded_sents (Tensor, [num_sents, batch, encoded dim])  
             S_samples (Tensor, [num_sents, batch, num_classes]) : the switching state posterior samples
+            sample from prior : whether or not to sample from prior (rather than posterior), use for generation
         Returns
             hidden samples (Tensor, [num_sents, batch, hidden dim]) : samples from postieror dyncamics distribtion
             mean (Tensor, [num_sents, batch, hidden dim]) : mean of posterior (for KL calc)
@@ -362,7 +363,10 @@ class SLDS(nn.Module):
             target_vect = encoded_sents[i, :, :]
             switch_state = S_samples[i]
             mean, logvar, prior_mean = self.dynamics_posterior_factor(prev_z, switch_state, torch.cat([target_vect, context_vect], dim=1))
-            z_sample = utils.normal_sample(mean, logvar, use_cuda=self.use_cuda)
+            if sample_from_prior:
+                z_sample = utils.normal_sample(prior_mean, logvar, use_cuda=self.use_cuda)
+            else:
+                z_sample = utils.normal_sample(mean, logvar, use_cuda=self.use_cuda)
             Z_samples.append(z_sample)
             means.append(mean)
             prior_means.append(prior_mean)
@@ -375,6 +379,75 @@ class SLDS(nn.Module):
         logvars= torch.stack(logvars, dim=0) #[num_sents, batch, hidden]
         return Z_samples, means, prior_means, logvars
 
+    def greedy_decode(self, curr_z, max_decode=30):
+        """
+        Output the logits at each timestep (the data liklihood outputs from the rnn)
+        Args:
+            data (Tensor, [batch, seq_len]) vocab ids of the data
+            curr_z (Tensor, [batch, hidden_size]) 
+        Ret:
+            outputs - list of indicies
+        """
+
+        dhidden = self.z2dec(curr_z) #output shape [batch, layers*hidden]
+        dhidden = dhidden.view(-1, self.layers, self.dec_hsize).transpose(0,1).contiguous() #[layers, batch, hiddensize]
+
+        outputs = []
+        prev_output = Variable(torch.LongTensor(1).zero_() + self.sos_idx)
+
+        for i in range(max_decode): 
+            dec_input = prev_output
+
+            dec_output, dhidden = self.liklihood_rnn(dec_input, dhidden, concat=curr_z) 
+            logits_t = self.liklihood_logits(dec_output)
+
+            #dec_output is [batch, hidden_dim]
+#            probs = F.log_softmax(logits_t, dim=1)
+#            top_vals, top_inds = probs.topk(1, dim=1)
+
+            probs = F.softmax(logits_t/0.5, dim=1)
+            top_inds = torch.multinomial(probs, 1)
+
+            outputs.append(top_inds.squeeze().item())
+            prev_output = top_inds[0]
+
+            if top_inds.squeeze().item() == self.eos_idx:
+                break
+
+        return outputs
+
+    def reconstruct(self, input, seq_lens):
+        """
+        Args
+            input (Tensor, [num_sents, batch, seq_len]) : Tensor of input ids for the embeddings lookup
+            seq_lens (Tensor [num_sents, batch]) : Store the sequence lengths for each batch for packing
+        Returns
+            output logits (Tensor, [num_sents, batch, seq_len, vocab size]) : logits for the output words
+            state logits (Tensor, [num_sents, batch, num classes]) : logits for state prediction, can be used for supervision and to calc state KL
+            Z_kl (Tensor, [batch]) : kl diveragence for the Z transitions (calculated for each batch)
+        """
+        batch_size = 1
+        num_sents = input.size(0)
+
+        encoded_sents = self.encode_sentences(input, seq_lens) #[num_sents, batch, encoder dim)
+        S_samples, state_logits = self.sample_switch_posterior(encoded_sents, gumbel_temp=0.50)
+        Z_samples, Z_means, prior_means, logvars = self.sample_hidden_posterior(encoded_sents, S_samples, sample_from_prior=True) #[num_sents, batch, hidden_dim]
+        print(F.softmax(state_logits, dim=2))
+        print(torch.exp(logvars).mean())
+       
+        #Now Evaluate the Liklihood for each sentence
+
+        outputs = []
+        for i in range(num_sents):
+            sent_out= self.greedy_decode(Z_samples[i])
+            outputs.append(sent_out)
+
+        return outputs
+
+    def set_use_cuda(self, value):
+        self.use_cuda = value
+        self.liklihood_rnn.use_cuda = value
+        self.sentence_encode_rnn.use_cuda = value
 
 
 

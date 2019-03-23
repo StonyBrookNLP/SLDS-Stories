@@ -223,12 +223,13 @@ class RocStoryBatches(ttdata.Iterator):
 class RocStoryDataset(ttdata.Dataset):
     'CSV containing the full RocStory dataset, used for unsupervised training'
 
-    def __init__(self, path, vocab):
+    def __init__(self, path, vocab, test=False):
 
         """
         Args
             path (str) : Filename of RocStory CSV
             vocab (Torchtext Vocab object)
+            test : Whether or not this is a test set or a training set (the csv is slightly different depending on it)
         """
 
         sent_1 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
@@ -239,6 +240,12 @@ class RocStoryDataset(ttdata.Dataset):
        
         fields = [('sent_1', sent_1), ('sent_2', sent_2),('sent_3', sent_3),('sent_4', sent_4),('sent_5', sent_5)]
         examples = []
+
+        if not test:
+            print("Loading RocStories (Training) Set")
+        else:
+            print("Loading RocStories (Validation/Testing) Set")
+
         with open(path, 'r') as f:
             csv_file = csv.reader(f)
             #Line format is id, title, sent1, sent2, sent3, sent4, sent5
@@ -246,10 +253,20 @@ class RocStoryDataset(ttdata.Dataset):
                 if i == 0:
                     continue
                 
-                s1, s2, s3, s4, s5 = line[2:]
+                if not test:
+                    s1, s2, s3, s4, s5 = line[2:]
+                else:
+                    s1, s2, s3, s4, s5 = line[1:6]
+                    
                 examples.append(ttdata.Example.fromlist([s1, s2, s3, s4, s5], fields))
 
  
         super(RocStoryDataset, self).__init__(examples, fields)
+
+def transform(output, dict):
+    out = ""
+    for i in output:
+        out += " " + dict[i]
+    return out
 
 

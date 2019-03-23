@@ -29,7 +29,7 @@ def tally_parameters(model):
 
 
 
-def compute_loss(text_logits, text_targets, target_lens, Z_kl, state_kl, iteration, use_cuda=True): 
+def compute_loss(text_logits, text_targets, target_lens, Z_kl, state_kl, iteration, kld_weight, use_cuda=True): 
     """
     Compute the loss term 
     Args: 
@@ -55,7 +55,8 @@ def compute_loss(text_logits, text_targets, target_lens, Z_kl, state_kl, iterati
     for i in range(num_sents):
         ce_loss += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda)
 
-    total_loss = ce_loss + Z_kl_mean + state_kl_mean
+#    total_loss = ce_loss + Z_kl_mean + state_kl_mean
+    total_loss = ce_loss + kld_weight*Z_kl_mean + state_kl_mean
     
     print_iter_stats(iteration, total_loss, ce_loss, Z_kl_mean, state_kl_mean)
     
@@ -122,21 +123,31 @@ def train(args):
     data_len = len(dataset)
 
     #0-antici, 1-anger, 2-disgust, 3-sad, 4-suprise, 5-fear, 6-trust, 7-joy
-    test_trans_matrix = torch.Tensor([[0.10, 0.10, 0.05, 0.10, 0.25, 0.10,0.10, 0.20],
-                                      [0.10, 0.10, 0.20, 0.25, 0.10, 0.10,0.10, 0.05],
-                                      [0.10, 0.25, 0.20, 0.10, 0.10, 0.10,0.10, 0.05],
-                                      [0.10, 0.20, 0.25, 0.10, 0.10, 0.10,0.10, 0.05],
-                                      [0.25, 0.10, 0.10, 0.10, 0.10, 0.10,0.05, 0.20],
-                                      [0.10, 0.10, 0.10, 0.20, 0.25, 0.10,0.05, 0.10],
-                                      [0.20, 0.10, 0.10, 0.10, 0.05, 0.10,0.10, 0.25],
-                                      [0.20, 0.05, 0.10, 0.10, 0.10, 0.10,0.25, 0.10]])
+#    test_trans_matrix = torch.Tensor([[0.10, 0.10, 0.05, 0.10, 0.25, 0.10,0.10, 0.20],
+#                                      [0.10, 0.10, 0.20, 0.25, 0.10, 0.10,0.10, 0.05],
+#                                      [0.10, 0.25, 0.20, 0.10, 0.10, 0.10,0.10, 0.05],
+#                                      [0.10, 0.20, 0.25, 0.10, 0.10, 0.10,0.10, 0.05],
+#                                      [0.25, 0.10, 0.10, 0.10, 0.10, 0.10,0.05, 0.20],
+#                                      [0.10, 0.10, 0.10, 0.20, 0.25, 0.10,0.05, 0.10],
+#                                      [0.20, 0.10, 0.10, 0.10, 0.05, 0.10,0.10, 0.25],
+#                                      [0.20, 0.05, 0.10, 0.10, 0.10, 0.10,0.25, 0.10]])
+
+    test_trans_matrix = torch.Tensor([[0.10, 0.10, 0.001, 0.10, 0.299, 0.10,0.10, 0.20],
+                                      [0.10, 0.10, 0.20, 0.299, 0.10, 0.10,0.10, 0.001],
+                                      [0.10, 0.299, 0.20, 0.10, 0.10, 0.10,0.10, 0.001],
+                                      [0.10, 0.25, 0.25, 0.10, 0.10, 0.10,0.05, 0.05],
+                                      [0.299, 0.10, 0.10, 0.10, 0.10, 0.10,0.001, 0.20],
+                                      [0.10, 0.10, 0.10, 0.20, 0.299, 0.10,0.001, 0.10],
+                                      [0.20, 0.10, 0.10, 0.10, 0.001, 0.10,0.10, 0.299],
+                                      [0.20, 0.001, 0.10, 0.10, 0.10, 0.10,0.299, 0.10]])
+
 
     if args.load_model:
         print("Loading the Model")
         model = torch.load(args.load_model)
     else:
         print("Creating the Model")
-        model = SLDS(args.hidden_size, args.emb_size, vocab, test_trans_matrix, use_cuda=use_cuda) #need to put arguments
+        model = SLDS(args.hidden_size, args.emb_size, vocab, test_trans_matrix, pretrained=args.use_pretrained, use_cuda=use_cuda) #need to put arguments
 
     #create the optimizer
     if args.load_opt:
@@ -169,7 +180,10 @@ def train(args):
             targets = targets.cuda()
             targen_lens= target_lens.cuda()
 
-        loss, _ = compute_loss(text_logits, targets, target_lens, Z_kl, state_kl, iteration, use_cuda=use_cuda)
+
+        kld_weight = min(1.0, iteration / 100000)
+
+        loss, _ = compute_loss(text_logits, targets, target_lens, Z_kl, state_kl, iteration, kld_weight, use_cuda=use_cuda)
  
         # backward propagation
         loss.backward()
@@ -177,6 +191,8 @@ def train(args):
         torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
         # Optimize
         optimizer.step() 
+
+        #print(torch.exp(model.dynamics_logvar).mean(dim=1))
 
         # End of an epoch - run validation
         if ((args.batch_size * iteration) % data_len == 0 or iteration % args.validate_after == 0) and iteration != 0:
