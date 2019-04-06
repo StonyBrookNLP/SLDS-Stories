@@ -13,6 +13,7 @@ from EncDec import Encoder, Decoder
 import torch.nn.functional as F
 import data_utils as du
 from SLDS import SLDS
+from SLDS2 import SLDS2
 from masked_cross_entropy import masked_cross_entropy
 from data_utils import EOS_TOK, SOS_TOK, PAD_TOK, transform
 import time
@@ -76,6 +77,8 @@ def generate(args):
     print("Loading the Model")
     model = torch.load(args.load_model, map_location='cpu')
     model.set_use_cuda(use_cuda)
+    model.eval()
+
 
     for iteration, story in enumerate(story_batches): #this will continue on forever (shuffling every epoch) till epochs finished
         batch, seq_lens = story_batches.combine_story(story) #should return batch tensor [num_sents, batch, seq_len] and seq_lens [num_sents, batch]
@@ -87,7 +90,7 @@ def generate(args):
 
         for i, sent in enumerate(outputs):
             print("TRUE: {}".format(transform(batch[i].data.squeeze(), vocab.itos)))
-            print("Reconstruct: {}\n".format(transform(outputs[i], vocab.itos)))
+            print("{}".format(transform(outputs[i], vocab.itos)))
         print("--------------------\n\n")
 
 

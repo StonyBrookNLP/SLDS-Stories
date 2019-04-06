@@ -115,8 +115,9 @@ class Decoder(EncDecBase):
         rnn_output, hidden = self.rnn(dec_input, hidden) #rnn_output is hidden state of last layer, hidden is for all layers (gets passed for next tstep)
         #rnn_output dim is [1, batch, hidden_size]
         rnn_output=torch.squeeze(rnn_output, dim=0)
-        if self.drop is not None:
-            rnn_output = self.drop(rnn_output)
+
+        #if self.drop is not None:
+        #    rnn_output = self.drop(rnn_output)
         
         return rnn_output, hidden
 

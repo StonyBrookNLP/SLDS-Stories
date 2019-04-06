@@ -10,7 +10,7 @@ import math
 from torch.autograd import Variable
 import torch.nn.functional as F
 import utils
-from EncDec import Encoder, Decoder, gather_last
+from EncDec import Encoder, Decoder, gather_last, sequence_mask
 from data_utils import EOS_TOK, SOS_TOK, PAD_TOK
 
 
@@ -28,7 +28,8 @@ class SLDS(nn.Module):
             """
             super(SLDS, self).__init__()
             self.hidden_size = self.dec_hsize = hidden_size
-            self.encoded_data_size = 2*hidden_size #Vector size to use whenever encoding text into a %&#ing vector
+            self.encoded_data_size = hidden_size #Vector size to use whenever encoding text into a %&#ing vector
+            #self.encoded_data_size = embd_size #Vector size to use whenever encoding text into a %&#ing vector
             self.trans_matrix = trans_matrix
             self.num_states = trans_matrix.shape[0]
             self.embd_size=embd_size
@@ -50,7 +51,8 @@ class SLDS(nn.Module):
 
 
             self.dynamics_mean = nn.ModuleList([nn.Linear(self.hidden_size, self.hidden_size, bias=False) for _ in range(self.num_states)])
-            #self.dynamics_logvar = nn.ModuleList([nn.Linear(self.hidden_size, self.hidden_size, bias=False) for _ in range(self.num_states)])
+            ##NEWWW
+#            self.dynamics_mean = nn.ModuleList([nn.Linear(self.hidden_size + self.layers*self.dec_hsize, self.hidden_size, bias=False) for _ in range(self.num_states)])
 
             if use_cuda:
                 self.dynamics_logvar = torch.nn.Parameter(torch.randn([self.num_states, self.hidden_size]).cuda()) #diagnol covariance [states, hidden] 
@@ -58,39 +60,48 @@ class SLDS(nn.Module):
                 self.dynamics_logvar = torch.nn.Parameter(torch.randn([self.num_states, self.hidden_size])) #diagnol covariance [states, hidden] 
 
 
-            self.sentence_encode_rnn= Encoder(self.embd_size, self.encoded_data_size // 2, in_embedding, "GRU", self.layers, bidir=True, use_cuda=use_cuda)
+            self.sentence_encode_rnn= Encoder(self.embd_size, self.encoded_data_size, in_embedding, "GRU", self.layers, bidir=False, use_cuda=use_cuda)
             self.z2dec = nn.Linear(self.hidden_size, self.dec_hsize*self.layers) #Convert z to initial hidden state for decoder
             self.liklihood_rnn= Decoder(self.embd_size + self.hidden_size, self.dec_hsize, out_embedding, "GRU", self.layers, use_cuda=use_cuda, dropout=dropout)
             self.liklihood_logits= nn.Linear(self.dec_hsize, self.vocab_size) #Weights to calculate logits, out [batch, vocab_size]
 
             #Variational Parameters
             self.dynamics_posterior_network = nn.Sequential(
-                                                nn.Linear(self.hidden_size + self.encoded_data_size*2, self.hidden_size),
-                                                nn.ReLU(),
-                                                nn.Linear(self.hidden_size, self.hidden_size)
+#                                                nn.Linear(self.hidden_size + self.encoded_data_size*2, self.hidden_size)#,
+                                                nn.Linear(self.encoded_data_size*2, self.hidden_size)#,
+                                               # nn.Tanh(),
+                                               # nn.Linear(self.hidden_size, self.hidden_size)
                                               )
+            self.dynamics_variance_posterior_network = nn.Sequential(
+                                                #nn.Linear(self.hidden_size + self.encoded_data_size*2, self.hidden_size)#,
+                                                nn.Linear(self.encoded_data_size*2, self.hidden_size)#,
+                                              #  nn.Tanh(),
+                                              #  nn.Linear(self.hidden_size, self.hidden_size)
+                                              )
+
             self.state_posterior_network = nn.Sequential(
                                                 nn.Linear(self.encoded_data_size*2, self.hidden_size),
-                                                nn.ReLU(),
+                                                nn.Tanh(),
                                                 nn.Linear(self.hidden_size, self.num_states)
                                               )
 
             if use_cuda:
                 self.dynamics_mean = self.dynamics_mean.cuda()
                 self.trans_matrix = self.trans_matrix.cuda()
-#                self.dynamics_logvar = self.dynamics_logvar.cuda()
                 self.sentence_encode_rnn = self.sentence_encode_rnn.cuda()
                 self.z2dec = self.z2dec.cuda()
                 self.liklihood_rnn = self.liklihood_rnn.cuda()
                 self.liklihood_logits = self.liklihood_logits.cuda()
                 self.dynamics_posterior_network = self.dynamics_posterior_network.cuda()
+                self.dynamics_variance_posterior_network = self.dynamics_variance_posterior_network.cuda()
                 self.state_posterior_network = self.state_posterior_network.cuda()
 
-    def forward(self, input, seq_lens):
+    def forward(self, input, seq_lens, gumbel_temp=1.0, state_labels=None):
         """
         Args
             input (Tensor, [num_sents, batch, seq_len]) : Tensor of input ids for the embeddings lookup
             seq_lens (Tensor [num_sents, batch]) : Store the sequence lengths for each batch for packing
+            state_labels (tensor [num_sents, batch]) : labels for the states if doing supervision
         Returns
             output logits (Tensor, [num_sents, batch, seq_len, vocab size]) : logits for the output words
             state logits (Tensor, [num_sents, batch, num classes]) : logits for state prediction, can be used for supervision and to calc state KL
@@ -100,26 +111,37 @@ class SLDS(nn.Module):
         num_sents = input.size(0)
 
         encoded_sents = self.encode_sentences(input, seq_lens) #[num_sents, batch, encoder dim)
-        S_samples, state_logits = self.sample_switch_posterior(encoded_sents)
-        Z_samples, Z_means, prior_means, logvars = self.sample_hidden_posterior(encoded_sents, S_samples) #[num_sents, batch, hidden_dim]
+       # encoded_sents = self.encode_sentences_embed_avg(input, seq_lens) #[num_sents, batch, encoder dim)
+        S_samples, state_logits = self.sample_switch_posterior(encoded_sents, gumbel_temp=gumbel_temp)
+
+        if state_labels is not None:
+            one_hots = torch.zeros(S_samples.shape).cuda() if self.use_cuda else torch.zeros(S_samples.shape)
+            S_samples = one_hots.scatter(2, state_labels, 1) #convert to one_hot vectors
+                
+
+        Z_samples, Z_means, prior_means, logvars, prior_vars = self.sample_hidden_posterior(encoded_sents, S_samples) #[num_sents, batch, hidden_dim]
 
        
         #Now Evaluate the Liklihood for each sentence
 
+        dhidden=None
         data_logits = []
         for i in range(num_sents):
-            logits = self.data_liklihood_factor(input[i,:,:], Z_samples[i]) #logits is [batch, seq, num_classes]
+         #   logits, dhidden = self.data_liklihood_factor(input[i,:,:], Z_samples[i], dhidden) #logits is [batch, seq, num_classes]
+            logits, dhidden = self.data_liklihood_factor(input[i,:,:], Z_samples[i]) #logits is [batch, seq, num_classes]
             data_logits.append(logits)
 
         data_logits = torch.stack(data_logits, dim=0) #[num_sents, batch, seq, num classes]
 
         #Calc KL terms
-        Z_kl = self.z_kl_divergence(Z_means, prior_means, logvars)
+        Z_kl = self.z_kl_divergence(Z_means, prior_means, logvars, prior_vars)
         state_kl = self.state_kl_divergence(F.softmax(state_logits, dim=2), self.state_factor(S_samples))
+
+        print(torch.mean((Z_means[1] - prior_means[1])*(Z_means[1] - prior_means[1])))
 
         return data_logits, state_logits, Z_kl, state_kl
 
-    def z_kl_divergence(self, Z_means, prior_means, logvars):
+    def z_kl_divergence(self, Z_means, prior_means, logvars, prior_logvars):
         """
         Calcuate the kl_devergence for the transition (z) distributions
         Calculate kl as: 
@@ -133,15 +155,21 @@ class SLDS(nn.Module):
         num_sents = Z_means.size(0)
         batch_size = Z_means.size(1)
 
+        inverse_prior_var = torch.exp(-1*prior_logvars)
+        variance = torch.exp(logvars)
+
         if self.use_cuda:
             kl = Variable(torch.zeros(batch_size).cuda())
         else:
             kl = Variable(torch.zeros(batch_size))
 
         for i in range(num_sents): #Calculate for each sentence
+            term1 = torch.sum(variance[i]*inverse_prior_var[i], dim=1) 
+            term2 = torch.sum(torch.log(torch.exp(prior_logvars[i])), dim=1) - torch.sum(torch.log(variance[i]), dim=1)
+            
             diff = prior_means[i] - Z_means[i]
             diff_squared = diff*diff
-            kl += (1.0/2.0)*torch.diag(torch.matmul(torch.exp(-1*logvars[i]), diff_squared.transpose(0,1)))
+            kl += (1.0/2.0)*(torch.diag(torch.matmul(inverse_prior_var[i], diff_squared.transpose(0,1))) + term1 + term2 - self.hidden_size)
 
         return kl
 
@@ -189,10 +217,10 @@ class SLDS(nn.Module):
         #all_var_weights = torch.stack([x.weight for x in self.dynamics_logvar])
         #crate single matrix as a convex comb of all dynamics matrix, using switch state as weights, 1 matrix for each batch
         mean_param = torch.einsum('ijk,bi->bjk', [all_mean_weights, switch_state])  #[batch X hidden X hidden]
-        var_param = torch.einsum('ij,bi->bj', [self.dynamics_logvar, switch_state]) #[batch X hidden]
+        logvar_param = torch.einsum('ij,bi->bj', [self.dynamics_logvar, switch_state]) #[batch X hidden]
 
         means = torch.einsum('bij,bj->bi',[mean_param, prev_z]) #batch X hidden]
-        return (means, var_param)
+        return (means, logvar_param)
 
     
     #Variational Posterior Approximation
@@ -211,16 +239,32 @@ class SLDS(nn.Module):
             logvar - Tensor [batch, hidden_size] (diagonal variance)
             means_prior - Same shape as means, the prior mean
         """
-        means_prior, var_param = self.dynamics_factor(prev_z, switch_state)
+        means_prior, logvar_prior = self.dynamics_factor(prev_z, switch_state)
 
-        network_input = torch.cat((prev_z, encoded_data), dim=1) 
+        network_input = encoded_data
         mean_residual = self.dynamics_posterior_network(network_input)
-        means = means_prior + mean_residual #Using the average might be another posibility
-        #means = mean_residual #Using the average might be another posibility
-        #means = (means_prior + mean_residual)/2 #Using the Average!
+        logvar_residual = self.dynamics_variance_posterior_network(network_input)
 
-        return (means, var_param, means_prior)
+        ###############################################
+        inverse_prior_var = torch.exp(-1*logvar_prior)
+        inverse_var= torch.exp(-1*logvar_residual)
 
+        product_variance = 1.0 / (inverse_prior_var + inverse_var)
+        product_mean = (inverse_var*mean_residual + inverse_prior_var*means_prior)*product_variance
+        ###############################################
+
+
+      #  means = means_prior + mean_residual #Using the average might be another posibility
+      #  logvar =  var_param + logvar_residual #Using the average might be another posibility
+
+       # means = mean_residual
+       # logvar = logvar_residual
+#        means = (means_prior + mean_residual)/2 #Using the Average!
+#        logvar = (logvar_prior + logvar_residual)/2 #Using the Average!
+        means = product_mean
+        logvar = torch.log(product_variance)
+
+        return (means, logvar, means_prior, logvar_prior)
 
     def state_factor(self, curr_switch_state):
         """
@@ -229,7 +273,9 @@ class SLDS(nn.Module):
             curr_switch_state (Tensor [num_sents, batch, num_states]) : can be a one hot or a probabilistic vector, if the latter, transition dist is a mixture
         """
         num_sents = curr_switch_state.size(0)
-        state_transitions = [torch.matmul(curr_switch_state[i], self.trans_matrix) for i in range(num_sents)]
+#        state_transitions = [torch.matmul(curr_switch_state[i], self.trans_matrix) for i in range(num_sents)]
+#        state_transitions = [torch.zeros(curr_switch_state.shape[1], curr_switch_state.shape[2]).cuda() + torch.Tensor([0.30, 0.02, 0.02, 0.30, 0.02, 0.02, 0.02, 0.30 ]).cuda()] + [torch.matmul(curr_switch_state[i+1].detach(), self.trans_matrix) for i in range(num_sents-1)]
+        state_transitions = [torch.zeros(curr_switch_state.shape[1], curr_switch_state.shape[2]).cuda() + torch.Tensor([0.30, 0.30, 0.40]).cuda()] + [torch.matmul(curr_switch_state[i+1].detach(), self.trans_matrix) for i in range(num_sents-1)]
         state_transitions = torch.stack(state_transitions, dim=0) #[num_sents, batch, encoder dim)
 
         return state_transitions
@@ -247,7 +293,7 @@ class SLDS(nn.Module):
         return self.state_posterior_network(encoded_data)
 
     #P(X | Z)
-    def data_liklihood_factor(self, data, curr_z):
+    def data_liklihood_factor(self, data, curr_z, dhidden=None):
         """
         Output the logits at each timestep (the data liklihood outputs from the rnn)
         Args:
@@ -258,19 +304,13 @@ class SLDS(nn.Module):
         """
         #REMEMBER: The data has both BOS and EOS appended to it
 
-        dhidden = self.z2dec(curr_z) #output shape [batch, layers*hidden]
-        dhidden = dhidden.view(-1, self.layers, self.dec_hsize).transpose(0,1).contiguous() #[layers, batch, hiddensize]
+        if dhidden is None:
+            dhidden = self.z2dec(curr_z) #output shape [batch, layers*hidden]
+            dhidden = dhidden.view(-1, self.layers, self.dec_hsize).transpose(0,1).contiguous() #[layers, batch, hiddensize]
 
         logits = []
         for i in range(data.size(1)-1): #dont process last (the eos)
-            #Choose input for this step
-            #if i == 0:
-            #    tens = torch.LongTensor(data.shape[0]).zero_() + self.sos_idx
-            #    if self.use_cuda:
-            #        dec_input = Variable(tens.cuda()) #Decoder input init with sos
-            #    else:
-            #        dec_input = Variable(tens)
-            #else:  
+
             dec_input = data[:, i]
 
             #dec_output is [batch, hidden_dim]
@@ -279,13 +319,14 @@ class SLDS(nn.Module):
             logits += [logits_t]
  
         logits = torch.stack(logits, dim=1) #DIMENSION BE [batch x seq x num_classes]
-        return logits
+#        return logits
+        return logits, dhidden
 
     def encode_sentences(self, input, seq_lens):
         """
         Encode each sentence into vector representation
         Args
-            input (Tensor, [num_sents, batch seq_len]) : Tensor of input ids for the embeddings lookup
+            input (Tensor, [num_sents, batch, seq_len]) : Tensor of input ids for the embeddings lookup
             seq_lens (Tensor [num_sents, batch]) : Store the sequence lengths for each batch for packing
         Returns
             encoded sentences (Tensor, [num_sents, batch, vocab size]) : logits for the output words
@@ -305,8 +346,39 @@ class SLDS(nn.Module):
         encoded_sents = torch.stack(encoded_sents, dim=0) #[num_sents, batch, encoder dim)
         return encoded_sents
 
+    def encode_sentences_embed_avg(self, input, seq_lens):
+        """
+        Encode each sentence into vector representation
+        Args
+            input (Tensor, [num_sents, batch, seq_len]) : Tensor of input ids for the embeddings lookup
+            seq_lens (Tensor [num_sents, batch]) : Store the sequence lengths for each batch for packing
+        Returns
+            encoded sentences (Tensor, [num_sents, batch, vocab size]) : logits for the output words
+        """
 
-    def sample_switch_posterior(self, encoded_sents, gumbel_temp=0.75):
+        num_sents = input.size(0)
+        batch_size = input.size(1)
+
+        encoded_sents = []
+
+        for i in range(num_sents):
+            mask = sequence_mask(seq_lens[i], max_len=torch.max(seq_lens)) #batch X max len
+            if self.use_cuda:
+                mask = mask.float().cuda()
+                fseq_lens = seq_lens.float().cuda()
+            else:
+                mask = mask.float()
+                fseq_lens = seq_lens.float()
+            embeded = self.liklihood_rnn.embeddings(input[i, :, :]).transpose(1,2) #batch X embedd size X seq len
+            summ = torch.einsum('bij,bj->bi',[embeded, mask]) #batch X embedded size]
+            avg = summ / fseq_lens[i].unsqueeze(dim=1)
+
+            encoded_sents.append(avg)
+
+        encoded_sents = torch.stack(encoded_sents, dim=0) #[num_sents, batch, encoder dim)
+        return encoded_sents
+
+    def sample_switch_posterior(self, encoded_sents, gumbel_temp=1.0):
         """
         Sample the switching state posterior given the encoded data
         Args
@@ -351,6 +423,7 @@ class SLDS(nn.Module):
         Z_samples = []
         means = []
         prior_means = []
+        prior_vars = []
         logvars = []
 
         if self.use_cuda:
@@ -362,24 +435,26 @@ class SLDS(nn.Module):
             context_vect = utils.get_context_vector(encoded_sents, i, future=True, use_cuda=self.use_cuda)
             target_vect = encoded_sents[i, :, :]
             switch_state = S_samples[i]
-            mean, logvar, prior_mean = self.dynamics_posterior_factor(prev_z, switch_state, torch.cat([target_vect, context_vect], dim=1))
-            if sample_from_prior:
-                z_sample = utils.normal_sample(prior_mean, logvar, use_cuda=self.use_cuda)
+            mean, logvar, prior_mean, prior_var = self.dynamics_posterior_factor(prev_z, switch_state, torch.cat([target_vect, context_vect], dim=1))
+            if sample_from_prior and i > 0:
+                z_sample = utils.normal_sample(prior_mean, prior_var, use_cuda=self.use_cuda)
             else:
                 z_sample = utils.normal_sample(mean, logvar, use_cuda=self.use_cuda)
             Z_samples.append(z_sample)
             means.append(mean)
             prior_means.append(prior_mean)
             logvars.append(logvar)
+            prior_vars.append(prior_var)
             prev_z = z_sample
 
         Z_samples = torch.stack(Z_samples, dim=0) #[num_sents, batch, hidden]
         means= torch.stack(means, dim=0) #[num_sents, batch, hidden]
         prior_means= torch.stack(prior_means, dim=0) #[num_sents, batch, hidden]
+        prior_vars= torch.stack(prior_vars, dim=0) #[num_sents, batch, hidden]
         logvars= torch.stack(logvars, dim=0) #[num_sents, batch, hidden]
-        return Z_samples, means, prior_means, logvars
+        return Z_samples, means, prior_means, logvars, prior_vars
 
-    def greedy_decode(self, curr_z, max_decode=30):
+    def greedy_decode(self, curr_z, max_decode=30, dhidden=None):
         """
         Output the logits at each timestep (the data liklihood outputs from the rnn)
         Args:
@@ -389,8 +464,9 @@ class SLDS(nn.Module):
             outputs - list of indicies
         """
 
-        dhidden = self.z2dec(curr_z) #output shape [batch, layers*hidden]
-        dhidden = dhidden.view(-1, self.layers, self.dec_hsize).transpose(0,1).contiguous() #[layers, batch, hiddensize]
+        if dhidden is None:
+            dhidden = self.z2dec(curr_z) #output shape [batch, layers*hidden]
+            dhidden = dhidden.view(-1, self.layers, self.dec_hsize).transpose(0,1).contiguous() #[layers, batch, hiddensize]
 
         outputs = []
         prev_output = Variable(torch.LongTensor(1).zero_() + self.sos_idx)
@@ -402,8 +478,9 @@ class SLDS(nn.Module):
             logits_t = self.liklihood_logits(dec_output)
 
             #dec_output is [batch, hidden_dim]
-#            probs = F.log_softmax(logits_t, dim=1)
-#            top_vals, top_inds = probs.topk(1, dim=1)
+
+        #    probs = F.log_softmax(logits_t, dim=1)
+        #    top_vals, top_inds = probs.topk(1, dim=1)
 
             probs = F.softmax(logits_t/0.5, dim=1)
             top_inds = torch.multinomial(probs, 1)
@@ -414,7 +491,7 @@ class SLDS(nn.Module):
             if top_inds.squeeze().item() == self.eos_idx:
                 break
 
-        return outputs
+        return outputs, dhidden
 
     def reconstruct(self, input, seq_lens):
         """
@@ -430,16 +507,23 @@ class SLDS(nn.Module):
         num_sents = input.size(0)
 
         encoded_sents = self.encode_sentences(input, seq_lens) #[num_sents, batch, encoder dim)
-        S_samples, state_logits = self.sample_switch_posterior(encoded_sents, gumbel_temp=0.50)
-        Z_samples, Z_means, prior_means, logvars = self.sample_hidden_posterior(encoded_sents, S_samples, sample_from_prior=True) #[num_sents, batch, hidden_dim]
+        #encoded_sents = self.encode_sentences_embed_avg(input, seq_lens) #[num_sents, batch, encoder dim)
+        S_samples, state_logits = self.sample_switch_posterior(encoded_sents, gumbel_temp=1.0)
+        Z_samples, Z_means, prior_means, logvars, prior_logvars = self.sample_hidden_posterior(encoded_sents, S_samples, sample_from_prior=True) #[num_sents, batch, hidden_dim]
+ #       Z_samples, Z_means, prior_means, logvars, outputs = self.sample_hidden_posterior2(encoded_sents, S_samples, input=None, sample_from_prior=True) #[num_sents, batch, hidden_dim]
+        print(torch.mean(Z_means[1] - prior_means[1]))
+        
         print(F.softmax(state_logits, dim=2))
         print(torch.exp(logvars).mean())
        
         #Now Evaluate the Liklihood for each sentence
 
+
+        dhidden=None
         outputs = []
         for i in range(num_sents):
-            sent_out= self.greedy_decode(Z_samples[i])
+           # sent_out, dhidden= self.greedy_decode(Z_samples[i], dhidden=dhidden)
+            sent_out, dhidden= self.greedy_decode(Z_samples[i])
             outputs.append(sent_out)
 
         return outputs

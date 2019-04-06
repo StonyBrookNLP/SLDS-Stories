@@ -60,7 +60,8 @@ def get_context_vector(encoded_sents, target, future=False, use_cuda=False):
     else:
         sents = encoded_sents[target+1:, :, :] #[sents, batch, encoder dim]
 
-    maxpool, _ = torch.max(sents, dim=0) #[batch, encoder dim]
+#    maxpool, _ = torch.max(sents, dim=0) #[batch, encoder dim]
+    maxpool = torch.mean(sents, dim=0) #[batch, encoder dim]
 
     return maxpool
 

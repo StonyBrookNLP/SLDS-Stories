@@ -23,6 +23,10 @@ SOS_TOK = "<sos>" #start of sentence
 EOS_TOK = "<eos>" #end of sentence 
 UNK_TOK = "<unk>"
 
+POS_LABEL = "POS"
+NEG_LABEL = "NEG"
+NEU_LABEL = "NEU"
+
 #These are the values that should be used during evalution to keep things consistent
 MIN_EVAL_SEQ_LEN = 8
 MAX_EVAL_SEQ_LEN = 50 
@@ -70,12 +74,15 @@ def load_vocab(filename):
         voc = pickle.load(fi)
     return voc
 
+def sentiment_label_vocab():
+    return Vocab(Counter([POS_LABEL, NEG_LABEL, NEU_LABEL]), specials=[])
+
 
 class ExtendableField(ttdata.Field):
     'A field class that allows the vocab object to be passed in' 
     #This is to avoid having to calculate the vocab every time 
     #we want to run
-    def __init__(self, vocab, *args, **kwargs):
+    def __init__(self, vocab, *args, include_lengths=True, **kwargs):
         """
         Args    
             Same args as Field except
@@ -88,7 +95,7 @@ class ExtendableField(ttdata.Field):
             include_lengths (bool) : Whether to return lengths with the batch output (for packing)
         """
 
-        super(ExtendableField, self).__init__(*args, pad_token=PAD_TOK, batch_first=True, include_lengths=True,**kwargs)
+        super(ExtendableField, self).__init__(*args, pad_token=PAD_TOK, batch_first=True, include_lengths=include_lengths,**kwargs)
         if vocab is not None:
             self.vocab = vocab
             self.vocab_created = True
@@ -201,6 +208,28 @@ class RocStoryBatches(ttdata.Iterator):
 
         return sents, seq_lens
 
+    def combine_sentiment_labels(self, batch, use_cuda=False):
+        """
+        Convert a sentiment targets and labels into an output 
+        of the form Tensor [num_sents, batch], this can be input directly into model
+        
+        returns:
+            (Tensor [num_sents, batch]) :
+        """
+        s1= batch.sent_1_lab #s1 is [batch_size]
+        s2= batch.sent_2_lab
+        s3= batch.sent_3_lab
+        s4= batch.sent_4_lab
+        s5= batch.sent_5_lab
+        
+        if use_cuda:
+            targets = torch.stack([s1,s2,s3,s4,s5], dim=0).cuda()
+        else:
+            targets = torch.stack([s1,s2,s3,s4,s5], dim=0)
+            
+        return targets
+
+
     def convert_to_target(self, input, seq_lens):
         """
         Convert an input to target (ie just remove the BOS from the start
@@ -219,11 +248,10 @@ class RocStoryBatches(ttdata.Iterator):
 
 
 
-#THIS IS DONE
 class RocStoryDataset(ttdata.Dataset):
     'CSV containing the full RocStory dataset, used for unsupervised training'
 
-    def __init__(self, path, vocab, test=False):
+    def __init__(self, path, vocab, test=False, preprocessed_examples=None):
 
         """
         Args
@@ -241,27 +269,85 @@ class RocStoryDataset(ttdata.Dataset):
         fields = [('sent_1', sent_1), ('sent_2', sent_2),('sent_3', sent_3),('sent_4', sent_4),('sent_5', sent_5)]
         examples = []
 
-        if not test:
-            print("Loading RocStories (Training) Set")
+        if preprocessed_examples is not None:
+            super(RocStoryDataset, self).__init__(preprocessed_examples, fields)
+            
         else:
-            print("Loading RocStories (Validation/Testing) Set")
+            if not test:
+                print("Loading RocStories (Training) Set")
+            else:
+                print("Loading RocStories (Validation/Testing) Set")
 
-        with open(path, 'r') as f:
-            csv_file = csv.reader(f)
-            #Line format is id, title, sent1, sent2, sent3, sent4, sent5
-            for i, line in enumerate(csv_file):
-                if i == 0:
-                    continue
-                
-                if not test:
-                    s1, s2, s3, s4, s5 = line[2:]
-                else:
-                    s1, s2, s3, s4, s5 = line[1:6]
+            with open(path, 'r') as f:
+                csv_file = csv.reader(f)
+                #Line format is id, title, sent1, sent2, sent3, sent4, sent5
+                for i, line in enumerate(csv_file):
+                    if i == 0:
+                        continue
                     
-                examples.append(ttdata.Example.fromlist([s1, s2, s3, s4, s5], fields))
+                    if not test:
+                        s1, s2, s3, s4, s5 = line[2:]
+                    else:
+                        s1, s2, s3, s4, s5 = line[1:6]
+                        
+                    examples.append(ttdata.Example.fromlist([s1, s2, s3, s4, s5], fields))
 
- 
-        super(RocStoryDataset, self).__init__(examples, fields)
+     
+            super(RocStoryDataset, self).__init__(examples, fields)
+
+class RocStoryDatasetSentiment(ttdata.Dataset):
+    'CSV containing the full RocStory dataset, with a sentiment tag for each sentence'
+
+    def __init__(self, path, vocab, label_voc, test=False, preprocessed_examples=None):
+
+        """
+        Args
+            path (str) : Filename of RocStory CSV
+            vocab (Torchtext Vocab object)
+            test : Whether or not this is a test set or a training set (the csv is slightly different depending on it)
+        """
+
+#        label_voc = Vocab(Counter([POS_LABEL, NEG_LABEL, NEU_LABEL]), specials=[])
+
+        sent_1 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        sent_2 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        sent_3 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        sent_4 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        sent_5 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+
+        sent_1_lab = ExtendableField(label_voc, include_lengths=False)
+        sent_2_lab= ExtendableField(label_voc, include_lengths=False)
+        sent_3_lab= ExtendableField(label_voc, include_lengths=False)
+        sent_4_lab= ExtendableField(label_voc, include_lengths=False)
+        sent_5_lab= ExtendableField(label_voc, include_lengths=False)
+
+       
+        fields = [('sent_1', sent_1), ('sent_2', sent_2),('sent_3', sent_3),('sent_4', sent_4),('sent_5', sent_5),
+                  ('sent_1_lab', sent_1_lab), ('sent_2_lab', sent_2_lab),('sent_3_lab', sent_3_lab),('sent_4_lab', sent_4_lab),('sent_5_lab', sent_5_lab)]
+        examples = []
+
+        if preprocessed_examples is not None:
+            super(RocStoryDatasetSentiment, self).__init__(preprocessed_examples, fields)
+            
+        else:
+            if not test:
+                print("Loading RocStories (Training) Set")
+            else:
+                print("Loading RocStories (Validation/Testing) Set")
+
+            with open(path, 'r') as f:
+                csv_file = csv.reader(f)
+                #Line format is id, title, sent1, sent2, sent3, sent4, sent5, sent_1 lab, ...
+                for i, line in enumerate(csv_file):
+                    if not test:
+                        sentences_labels = line[2:]
+                    else:
+                        sentences_labels = line[1:6] + line[7:]
+                        
+                    examples.append(ttdata.Example.fromlist(sentences_labels, fields))
+     
+            super(RocStoryDatasetSentiment, self).__init__(examples, fields)
+
 
 def transform(output, dict):
     out = ""
