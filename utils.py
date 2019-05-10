@@ -18,6 +18,15 @@ def normal_sample(mu, logvar, use_cuda=False):
     std = torch.exp(logvar / 2.0)
     return mu + eps * std
 
+def normal_sample_deterministic(mu, logvar, eps, use_cuda=False):
+    """
+    Reparmaterization trick for normal distribution
+    """ 
+    if use_cuda:
+        eps = eps.cuda()
+    std = torch.exp(logvar / 2.0)
+    return mu + eps * std
+
 
 def gumbel_sample(shape, use_cuda=False, eps=1e-20):
     """
@@ -34,6 +43,13 @@ def gumbel_softmax_sample(logits, temp, use_cuda=False):
     """
     y = logits + gumbel_sample(logits.size(), use_cuda=use_cuda)
     return F.softmax(y / temp, dim=1)
+
+
+def top_k_logits(logits, k):
+    vals,_ = torch.topk(logits,k)
+    mins = vals[:,-1].unsqueeze(dim=1).expand_as(logits)
+    return torch.where(logits < mins, torch.ones_like(logits)*-1e10,logits)
+
 
 def get_context_vector(encoded_sents, target, future=False, use_cuda=False):
     """

@@ -1,6 +1,3 @@
-########################################
-#   module for training - incomplete
-########################################
 import torch 
 import torch.nn as nn
 from torchtext.data import Iterator as BatchIter
@@ -16,7 +13,8 @@ import data_utils as du
 from SLDS import SLDS
 #from SLDS_bias import SLDS
 
-from masked_cross_entropy import masked_cross_entropy
+from Sampler import GibbsSampler
+
 from data_utils import EOS_TOK, SOS_TOK, PAD_TOK, transform
 import time
 from torchtext.vocab import GloVe
@@ -50,31 +48,28 @@ def generate(args):
     else:
         use_cuda=False
 
-    
+    test_trans_matrix = torch.Tensor([[0.39, 0.41, 0.20],
+                                  [0.31, 0.38, 0.31],
+                                  [0.20, 0.41, 0.39]])
+
+
+
     #Load the data
     print("\nLoading Vocab")
     vocab = du.load_vocab(args.vocab)
     print("Vocab Loaded, Size {}".format(len(vocab.stoi.keys())))
 
+    label_vocab = du.sentiment_label_vocab()
+
     print("Loading Dataset")
+   # dataset = du.RocStoryDatasetSentiment(args.train_data, vocab, label_vocab) 
     dataset = du.RocStoryDataset(args.train_data, vocab, test=True) 
     print("Finished Loading Dataset {} examples".format(len(dataset)))
 
-    sort_func = lambda x: max([len(x.sent_1),len(x.sent_2),len(x.sent_3),len(x.sent_4),len(x.sent_5)])
 
 #    story_batches = du.RocStoryBatches(dataset, args.batch_size, sort_key=sort_func, train=True, sort_within_batch=True, device=-1)
     story_batches = du.RocStoryBatches(dataset, 1, train=False, sort=False, device=-1)
     data_len = len(dataset)
-
-    #0-antici, 1-anger, 2-disgust, 3-sad, 4-suprise, 5-fear, 6-trust, 7-joy
-    test_trans_matrix = torch.Tensor([[0.10, 0.10, 0.05, 0.10, 0.25, 0.10,0.10, 0.20],
-                                      [0.10, 0.10, 0.20, 0.25, 0.10, 0.10,0.10, 0.05],
-                                      [0.10, 0.25, 0.20, 0.10, 0.10, 0.10,0.10, 0.05],
-                                      [0.10, 0.20, 0.25, 0.10, 0.10, 0.10,0.10, 0.05],
-                                      [0.25, 0.10, 0.10, 0.10, 0.10, 0.10,0.05, 0.20],
-                                      [0.10, 0.10, 0.10, 0.20, 0.25, 0.10,0.05, 0.10],
-                                      [0.20, 0.10, 0.10, 0.10, 0.05, 0.10,0.10, 0.25],
-                                      [0.20, 0.05, 0.10, 0.10, 0.10, 0.10,0.25, 0.10]])
 
     print("Loading the Model")
     model = torch.load(args.load_model, map_location='cpu')
@@ -83,20 +78,23 @@ def generate(args):
 
     eps = [torch.randn(1, model.hidden_size) for _ in range(5)]
 
+    sampler = GibbsSampler(model, vocab, use_bias=args.bias)
 
     for iteration, story in enumerate(story_batches): #this will continue on forever (shuffling every epoch) till epochs finished
         batch, seq_lens = story_batches.combine_story(story) #should return batch tensor [num_sents, batch, seq_len] and seq_lens [num_sents, batch]
+       # state_targets= story_batches.combine_sentiment_labels(story, use_cuda=use_cuda) #state_targets is [numsents, batch, 1]
+        state_targets= None
 
         if use_cuda:
             batch = batch.cuda()
 
- #       outputs = model.reconstruct(batch, seq_lens, eps=eps, initial_sents=args.initial_sents)
-        outputs = model.reconstruct(batch, seq_lens, eps=eps)
-
-        for i, sent in enumerate(outputs):
-            print("TRUE: {}".format(transform(batch[i].data.squeeze(), vocab.itos)))
-            print("{}".format(transform(outputs[i], vocab.itos)))
-        print("--------------------\n\n")
+        outputs = sampler.aggregate_gibbs_sample(batch, state_targets, [1,2,3], seq_lens, 1, 250, test_trans_matrix) 
+#        outputs = sampler.aggregate_gibbs_sample(batch, state_targets, [0,2,4], seq_lens, 1, 250, test_trans_matrix) 
+        print(outputs)
+#        for i, sent in enumerate(outputs):
+#            print("TRUE: {}".format(transform(batch[i].data.squeeze(), vocab.itos)))
+#            print("{}".format(transform(outputs[i], vocab.itos)))
+#        print("--------------------\n\n")
 
 
 
@@ -108,6 +106,7 @@ if __name__ == "__main__":
     parser.add_argument('--vocab', type=str, help='the vocabulary pickle file', default='./data/rocstory_vocab_f5.pkl')
     parser.add_argument('--seed', type=int, default=11, help='random seed') 
     parser.add_argument('--cuda', action='store_true', help='use CUDA')
+    parser.add_argument('-bias', action='store_true', help='use bias')
     parser.add_argument('-src_seq_length', type=int, default=50, help="Maximum source sequence length")
     parser.add_argument('-max_decode_len', type=int, default=50, help='Maximum prediction length.')
     parser.add_argument('--initial_sents', type=int, default=0)

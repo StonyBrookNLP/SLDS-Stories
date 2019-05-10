@@ -286,7 +286,7 @@ class RocStoryDataset(ttdata.Dataset):
                         continue
                     
                     if not test:
-                        s1, s2, s3, s4, s5 = line[2:]
+                        s1, s2, s3, s4, s5 = line[2:7]
                     else:
                         s1, s2, s3, s4, s5 = line[1:6]
                         

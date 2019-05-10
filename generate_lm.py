@@ -12,9 +12,7 @@ from torch.autograd import Variable
 from EncDec import Encoder, Decoder
 import torch.nn.functional as F
 import data_utils as du
-
-from SLDS import SLDS
-#from SLDS_bias import SLDS
+from LM import LM
 
 from masked_cross_entropy import masked_cross_entropy
 from data_utils import EOS_TOK, SOS_TOK, PAD_TOK, transform
@@ -58,6 +56,7 @@ def generate(args):
 
     print("Loading Dataset")
     dataset = du.RocStoryDataset(args.train_data, vocab, test=True) 
+#    dataset = du.RocStoryDataset(args.train_data, vocab, test=False) 
     print("Finished Loading Dataset {} examples".format(len(dataset)))
 
     sort_func = lambda x: max([len(x.sent_1),len(x.sent_2),len(x.sent_3),len(x.sent_4),len(x.sent_5)])
@@ -81,8 +80,6 @@ def generate(args):
     model.set_use_cuda(use_cuda)
     model.eval()
 
-    eps = [torch.randn(1, model.hidden_size) for _ in range(5)]
-
 
     for iteration, story in enumerate(story_batches): #this will continue on forever (shuffling every epoch) till epochs finished
         batch, seq_lens = story_batches.combine_story(story) #should return batch tensor [num_sents, batch, seq_len] and seq_lens [num_sents, batch]
@@ -90,14 +87,16 @@ def generate(args):
         if use_cuda:
             batch = batch.cuda()
 
- #       outputs = model.reconstruct(batch, seq_lens, eps=eps, initial_sents=args.initial_sents)
-        outputs = model.reconstruct(batch, seq_lens, eps=eps)
+        if args.interpolate:
+            outputs = model.interpolate(batch, seq_lens, args.initial_sents, args.num_samples, vocab)
+        else:
+            outputs = model.reconstruct(batch, seq_lens, args.initial_sents)
 
+        
         for i, sent in enumerate(outputs):
-            print("TRUE: {}".format(transform(batch[i].data.squeeze(), vocab.itos)))
+            #print("TRUE: {}".format(transform(batch[i].data.squeeze(), vocab.itos)))
             print("{}".format(transform(outputs[i], vocab.itos)))
-        print("--------------------\n\n")
-
+        print("==========================\n\n")
 
 
 if __name__ == "__main__":
@@ -110,8 +109,10 @@ if __name__ == "__main__":
     parser.add_argument('--cuda', action='store_true', help='use CUDA')
     parser.add_argument('-src_seq_length', type=int, default=50, help="Maximum source sequence length")
     parser.add_argument('-max_decode_len', type=int, default=50, help='Maximum prediction length.')
-    parser.add_argument('--initial_sents', type=int, default=0)
+    parser.add_argument('--initial_sents', type=int, default=1)
+    parser.add_argument('-interpolate', action='store_true')
     parser.add_argument('--load_model', type=str)
+    parser.add_argument('--num_samples', type=int, default=2000)
     
     args = parser.parse_args()
 

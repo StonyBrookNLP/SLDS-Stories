@@ -92,11 +92,6 @@ def compute_loss_supervised(text_logits, text_targets, target_lens, Z_kl, state_
         ce_loss += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda)
         state_loss += state_loss_fn(state_logits[i], state_targets[i])
 
-#    if Z_kl_mean <= 20.0: #Model_try2 useses free bits
-#    if Z_kl_mean <= 1000.0 and iteration <= 10000:
-#        print("Free Bits")
-#        kld_weight = 0.0
-
     total_loss = ce_loss + kld_weight*Z_kl_mean + state_loss
     
     print_iter_stats(iteration, total_loss, ce_loss, Z_kl_mean, state_loss)
@@ -168,25 +163,6 @@ def train(args):
     story_batches = du.RocStoryBatches(dataset, args.batch_size, train=True, device=-1)
     data_len = len(dataset)
 
-    #0-antici, 1-anger, 2-disgust, 3-sad, 4-suprise, 5-fear, 6-trust, 7-joy
-#    test_trans_matrix = torch.Tensor([[0.10, 0.10, 0.05, 0.10, 0.25, 0.10,0.10, 0.20],
-#                                      [0.10, 0.10, 0.20, 0.25, 0.10, 0.10,0.10, 0.05],
-#                                      [0.10, 0.25, 0.20, 0.10, 0.10, 0.10,0.10, 0.05],
-#                                      [0.10, 0.20, 0.25, 0.10, 0.10, 0.10,0.10, 0.05],
-#                                      [0.25, 0.10, 0.10, 0.10, 0.10, 0.10,0.05, 0.20],
-#                                      [0.10, 0.10, 0.10, 0.20, 0.25, 0.10,0.05, 0.10],
-#                                      [0.20, 0.10, 0.10, 0.10, 0.05, 0.10,0.10, 0.25],
-#                                      [0.20, 0.05, 0.10, 0.10, 0.10, 0.10,0.25, 0.10]])
-
-#    test_trans_matrix = torch.Tensor([[0.20, 0.05, 0.001, 0.05, 0.499, 0.05,0.05, 0.10],
-#                                      [0.05, 0.25, 0.10, 0.299, 0.10, 0.10,0.10, 0.001],
-#                                      [0.10, 0.299, 0.20, 0.10, 0.10, 0.10,0.10, 0.001],
-#                                      [0.05, 0.25, 0.25, 0.20, 0.05, 0.10,0.05, 0.05],
-#                                      [0.299, 0.05, 0.10, 0.05, 0.10, 0.10,0.001, 0.30],
-#                                      [0.05, 0.05, 0.10, 0.20, 0.299, 0.20,0.001, 0.10],
-#                                      [0.01, 0.10, 0.10, 0.10, 0.001, 0.10,0.29, 0.299],
-#                                      [0.10, 0.001, 0.05, 0.05, 0.05, 0.05,0.399, 0.30]])
-
     test_trans_matrix = torch.Tensor([[0.02, 0.96, 0.02],
                                       [0.02, 0.02, 0.96],
                                       [0.96, 0.02, 0.02]])
@@ -197,8 +173,7 @@ def train(args):
         model = torch.load(args.load_model)
     else:
         print("Creating the Model")
-#        model = SLDS(args.hidden_size, args.emb_size, vocab, test_trans_matrix, layers=args.layers, pretrained=args.use_pretrained, use_cuda=use_cuda, dropout=args.dropout) #need to put arguments
-        model = SLDS(args.hidden_size, args.rnn_hidden_size, args.emb_size, vocab, test_trans_matrix, layers=args.layers, pretrained=args.use_pretrained, use_cuda=use_cuda, dropout=args.dropout) 
+        model = SLDS(args.hidden_size, args.rnn_hidden_size, args.emb_size, vocab, test_trans_matrix, layers=args.layers, pretrained=args.use_pretrained, use_cuda=use_cuda, dropout=args.dropout, use_bias=not args.no_bias) 
 
     #create the optimizer
     if args.load_opt:
@@ -206,13 +181,18 @@ def train(args):
         optimizer = torch.load(args.load_opt)
     else:
         print("Creating the optimizer anew")
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+        optimizer_generative = torch.optim.Adam(model.generative_params(), lr=args.lr_dyn) 
+        print(optimizer_generative)
+        optimizer_variational = torch.optim.Adam(model.variational_params(), lr=args.lr)
 
     start_time = time.time() #start of epoch 1
     curr_epoch = 1
     valid_loss = [0.0]
 
     gumbel_temp =1.0
+    update_both=False
+
+    kld_weight =1.0 
     for iteration, story in enumerate(story_batches): #this will continue on forever (shuffling every epoch) till epochs finished
         batch, seq_lens = story_batches.combine_story(story) #should return batch tensor [num_sents, batch, seq_len] and seq_lens [num_sents, batch]
         targets, target_lens = story_batches.convert_to_target(batch, seq_lens)
@@ -237,27 +217,9 @@ def train(args):
         else:
             text_logits, state_logits, Z_kl, state_kl = model(batch, seq_lens, gumbel_temp=gumbel_temp)
 
-        
 
-        #kld_weight = min(1.0, iteration / 10000)
-        ##################### For Unsupervised, lots of KL annealing needed
-        #if iteration > 10000:
-        #    kld_weight = min(0.05, (iteration-10000.0) / 100000.0)
-        #else:
-        #    kld_weight = 0.00
-        #####################
-        #   kld_weight = min(1.0, (iteration) / 60000.0)
-       # kld_weight =1.0
+        kld_weight = min(0.075, (iteration) / 200000.0) #use for train_specicalinit_32  #THIS works good! USE FOR EVERYTHING ELSE
 
-       # kld_weight = min(0.05, (iteration) / 500000.0) #use for train_special_init2
-        kld_weight = min(0.10, (iteration) / 100000.0) #use for train_special_init32
-
- #       kld_weight =0.10 
-      #  kld_weight = min(0.10, iteration / 500000)
-#        kld_weight = 1.0
-
-#        gumbel_weight = min(1.0, iteration / 3000)
-#        gumbel_temp= 1.0*(1-gumbel_weight) + 0.5*gumbel_weight
         print(kld_weight)
         
         if args.sentiment:
@@ -270,7 +232,15 @@ def train(args):
         # Gradient clipping
         torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
         # Optimize
-        optimizer.step() 
+        if update_both:
+            print("Update Both")
+            optimizer_generative.step() 
+            optimizer_variational.step() 
+        else:
+            print("Update Variational Only")
+            optimizer_variational.step()
+            if (iteration + 1) % 10000 == 0: #10000 for special_init_32, This works good! #JUST USE THIS, THIS IS BEST
+                update_both=True
 
         #print(torch.exp(model.dynamics_logvar).mean(dim=1))
 
@@ -292,8 +262,8 @@ def train(args):
             print("Saving checkpoint for epoch {} at {}.\n".format(curr_epoch, args.save_model))
             # curr_epoch and validation stats appended to the model name
 
-            torch.save(model, args.save_model)
-            torch.save(optimizer, "{}_{}".format("optimizer", args.save_model))
+            torch.save(model, "{}_{}".format(args.save_model, iteration))
+            #torch.save(optimizer, "{}_{}".format("optimizer", args.save_model))
 
 
 
@@ -303,31 +273,33 @@ if __name__ == "__main__":
     parser.add_argument('--train_data', type=str)
     parser.add_argument('--valid_data', type=str)
     parser.add_argument('--vocab', type=str, help='the vocabulary pickle file')
-   # parser.add_argument('--hidden_size', type=int, default=300, help='size of hidden state Z')
     parser.add_argument('--hidden_size', type=int, default=32, help='size of hidden state Z')
     parser.add_argument('--rnn_hidden_size', type=int, default=512, help='size of hidden state Z')
     parser.add_argument('--emb_size', type=int, default=300, help='size of word embeddings')
     parser.add_argument('--layers', type=int, default=1, help='number of layers')
-    parser.add_argument('--lr', type=float, default=0.0005, help='initial learning rate')
+    parser.add_argument('--lr', type=float, default=0.001, help='initial learning rate')
+    parser.add_argument('--lr_dyn', type=float, default=0.0005, help='initial learning rate for dynamics parameters')
     parser.add_argument('--log_every', type=int, default=200)
     parser.add_argument('--save_after', type=int, default=500)
     parser.add_argument('--validate_after', type=int, default=2500)
     parser.add_argument('--optimizer', type=str, default='adam', help='adam, adagrad, sgd')
     parser.add_argument('--clip', type=float, default=5.0, help='gradient clipping')
-    parser.add_argument('--epochs', type=int, default=40, help='upper epoch limit')
-    parser.add_argument('--batch_size', type=int, default=32, metavar='N', help='batch size')
+    parser.add_argument('--epochs', type=int, default=120, help='upper epoch limit')
+    parser.add_argument('--batch_size', type=int, default=100, metavar='N', help='batch size')
     parser.add_argument('--seed', type=int, default=11, help='random seed') 
     parser.add_argument('-cuda', action='store_true', help='use CUDA')
     parser.add_argument('-bidir', action='store_true', help='Use bidirectional encoder') 
     parser.add_argument('--src_seq_length', type=int, default=50, help="Maximum source sequence length")
     parser.add_argument('--max_decode_len', type=int, default=50, help='Maximum prediction length.')
     parser.add_argument('--save_model', default='model', help="""Model filename""")
-    parser.add_argument('--latent_dim', type=int, default=256, help='The dimension of the latent embeddings')
     parser.add_argument('-use_pretrained',action='store_true', help='Use pretrained glove vectors')
-    parser.add_argument('--dropout', type=float, default=0.0, help='loss hyperparameters')
+    parser.add_argument('--dropout', type=float, default=0.25, help='Dropout in decoder embeddings and output')
     parser.add_argument('--load_model', type=str)
     parser.add_argument('--load_opt', type=str)
     parser.add_argument('-sentiment', action='store_true', help='use sentiment state supervision')
+    parser.add_argument('-no_bias', action='store_true', help='Dont use a bias term in the transistions')
+
+
     
     args = parser.parse_args()
 
@@ -344,6 +316,7 @@ if __name__ == "__main__":
         else:
             torch.cuda.manual_seed(args.seed)
 
+    # diff between train and classic: in classic pass .txt etension for files.
     train(args)
 
 

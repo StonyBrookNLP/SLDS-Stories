@@ -82,7 +82,7 @@ class Decoder(EncDecBase):
         super(Decoder, self).__init__(emb_size, hidden_size, embeddings, cell_type, layers, bidir, use_cuda) 
         
         if dropout > 0:
-            print("Using a Dropout Value of {} in the decoder".format(dropout))
+            print("Using a Dropout Value of {} in the decoder and in last layer".format(dropout))
             self.drop = nn.Dropout(dropout)
         else:
             self.drop = None
@@ -116,8 +116,8 @@ class Decoder(EncDecBase):
         #rnn_output dim is [1, batch, hidden_size]
         rnn_output=torch.squeeze(rnn_output, dim=0)
 
-        #if self.drop is not None:
-        #    rnn_output = self.drop(rnn_output)
+        if self.drop is not None:
+            rnn_output = self.drop(rnn_output)
         
         return rnn_output, hidden
 
