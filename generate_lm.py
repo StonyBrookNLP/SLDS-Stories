@@ -80,8 +80,29 @@ def generate(args):
     model.set_use_cuda(use_cuda)
     model.eval()
 
+    # calculate NLL
+    if args.nll:
+        train_loss = 0.0
+        for iteration, story in enumerate(story_batches):    
+            batch, seq_lens = story_batches.combine_story(story)
+            targets, target_lens = story_batches.convert_to_target(batch, seq_lens)
 
-    for iteration, story in enumerate(story_batches): #this will continue on forever (shuffling every epoch) till epochs finished
+            if use_cuda:
+                batch = batch.cuda()
+                targets = targets.cuda()
+                targen_lens= target_lens.cuda()
+
+            text_logits = model(batch, seq_lens, gumbel_temp=gumbel_temp)
+            loss, _ = compute_loss_unsupervised(text_logits, targets, target_lens, iteration, use_cuda=use_cuda)
+            total_loss += loss.item()
+        nll = total_loss / data_len # batch_size is one
+
+        print("NLL {:.4f}".format(nll))
+
+        break # break out
+
+            
+    for iteration, story in enumerate(story_batches): 
         batch, seq_lens = story_batches.combine_story(story) #should return batch tensor [num_sents, batch, seq_len] and seq_lens [num_sents, batch]
 
         if use_cuda:
@@ -113,7 +134,7 @@ if __name__ == "__main__":
     parser.add_argument('-interpolate', action='store_true')
     parser.add_argument('--load_model', type=str)
     parser.add_argument('--num_samples', type=int, default=2000)
-    
+    parser.add_argument('--nll', action='store_true', help='Calculate NLL value')    
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)

@@ -81,8 +81,33 @@ def generate(args):
     model.set_use_cuda(use_cuda)
     model.eval()
 
-    eps = [torch.randn(1, model.hidden_size) for _ in range(5)]
+    # calculate NLL
+    if args.nll:
+        nlls = []
+        
+        for n in range(args.nll_samples):
+            total_loss = 0.0
+            for iteration, story in enumerate(story_batches):
+                batch, seq_lens = story_batches.combine_story(story)
+                targets, target_lens = story_batches.convert_to_target(batch, seq_lens)
 
+                if use_cuda:
+                    batch = batch.cuda()
+                    targets = targets.cuda()
+                    targen_lens= target_lens.cuda()
+           
+                text_logits, state_logits, Z_kl, state_kl = model(batch, seq_lens, gumbel_temp=gumbel_temp)
+                loss, _ = compute_loss_unsupervised(text_logits, targets, target_lens, Z_kl, state_kl, iteration, kld_weight, use_cuda=use_cuda)
+                total_loss += loss.item()
+
+            nlls.append(total_loss / data_len) # batch_size is 1
+        
+        mean, std = np.mean(nlls), np.std(nlls)
+        print("NLL mean {:.4f} and sd {:.4f}".format(mean, std))
+    
+        break # break out
+
+    eps = [torch.randn(1, model.hidden_size) for _ in range(5)]
 
     for iteration, story in enumerate(story_batches): #this will continue on forever (shuffling every epoch) till epochs finished
         batch, seq_lens = story_batches.combine_story(story) #should return batch tensor [num_sents, batch, seq_len] and seq_lens [num_sents, batch]
@@ -112,7 +137,8 @@ if __name__ == "__main__":
     parser.add_argument('-max_decode_len', type=int, default=50, help='Maximum prediction length.')
     parser.add_argument('--initial_sents', type=int, default=0)
     parser.add_argument('--load_model', type=str)
-    
+    parser.add_argument('--nll', vaction='store_true', help='Calculate approximate NLL')
+
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
