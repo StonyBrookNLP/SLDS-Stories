@@ -42,7 +42,7 @@ def build_transition(fpath, num_states):
     return M
 
 
-fpath = "rocstories_FULL_sentiment.csv"
+fpath = "../data/rocstories_FULL_sentiment.csv"
 num_states = 3
 
 M = build_transition(fpath, num_states)

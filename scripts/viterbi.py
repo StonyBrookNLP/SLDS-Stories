@@ -38,6 +38,7 @@ def decode(t_matrix, states, start, end, path_len):
     print(path)
 
 
+## running
 t_matrix = np.ones((3,3))
 t_matrix = t_matrix / np.sum(t_matrix, axis=1)
 states = [0,1,2]
