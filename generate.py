@@ -90,6 +90,7 @@ def generate(args):
         # new iterator has src, target, and target_id
         for iteration, story in enumerate(story_batches):
             batch1, seq_lens1, batch2, seq_lens2, tid = story_batches.combine_story_cloze(story)
+            #print(type(tid[0]), tid[0])
             targets1, target_lens1 = story_batches.convert_to_target(batch1, seq_lens1)
             targets2, target_lens2 = story_batches.convert_to_target(batch2, seq_lens2)
             if use_cuda:
@@ -107,7 +108,7 @@ def generate(args):
                 text_logits, state_logits, Z_kl, state_kl = model(batch2, seq_lens2, gumbel_temp=gumbel_temp)
             nll2, _ = compute_loss_unsupervised(text_logits, targets2, target_lens2, Z_kl, state_kl, iteration, kld_weight, use_cuda=use_cuda, do_print=False)
            
-            if (nll1 < nll2 and tid == "1") or (nll1 > nll2 and tid == "2"): 
+            if (nll1 < nll2 and tid[0] == "1") or (nll1 > nll2 and tid[0] == "2"): 
                 accuracy += 1
         
         print("Accuracy {}/{} == {:.4f}".format(accuracy, data_len, accuracy/data_len))
