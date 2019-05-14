@@ -245,9 +245,74 @@ class RocStoryBatches(ttdata.Iterator):
         return targets, seq_lens - 1
 
 
+    def combine_story_cloze(self, batch, pad_id=1):
+
+        s1, s1_len = batch.sent_1
+        s2, s2_len = batch.sent_2
+        s3, s3_len = batch.sent_3
+        s4, s4_len = batch.sent_4
+        s5, s5_len = batch.opt1
+        s6, s6_len = batch.opt2
+        tid = batch.tid
+        seq_lens1 = torch.stack([s1_len, s2_len, s3_len, s4_len, s5_len], dim=0)
+        seq_lens2 = torch.stack([s1_len, s2_len, s3_len, s4_len, s6_len], dim=0)
+
+        max_len = torch.max(seq_lens1)
+        sents1 = [s1, s2, s3, s4, s5]
+        for i in range(len(sents1)):
+            curr_len = sents1[i].shape[1]
+            pad_len = max_len - curr_len
+            sents1[i] = F.pad(sents1[i], (0, pad_len), mode='constant', value=pad_id)
+        sents1 = torch.stack(sents1, dim=0)
+
+        
+        max_len = torch.max(seq_lens2)
+        sents2 = [s1, s2, s3, s4, s6]
+        for i in range(len(sents2)):
+            curr_len = sents2[i].shape[1]
+            pad_len = max_len - curr_len
+            sents2[i] = F.pad(sents2[i], (0, pad_len), mode='constant', value=pad_id)
+        sents2 = torch.stack(sents2, dim=0)
+
+        return sents1, seq_lens1, sents2, seq_lens2, tid
 
 
+class RocStoryClozeDataset(ttdata.Dataset):
 
+    def __init__(self, path, vocab, preprocessed_examples=None):
+
+        sent_1 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        sent_2 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        sent_3 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        sent_4 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        sent_5 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        sent_6 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")    
+        tid = ttdata.RawField()
+
+        fields = [('sent_1', sent_1), ('sent_2', sent_2),('sent_3', sent_3),('sent_4', sent_4),('opt1', sent_5), ('opt2', sent_6), ('tid', tid)]
+        examples = []
+
+        if preprocessed_examples is not None:
+            super(RocStoryDataset, self).__init__(preprocessed_examples, fields)
+            
+        else: 
+            print("Loading RocStories (Validation/Testing) Set")
+
+            with open(path, 'r') as f:
+                csv_file = csv.reader(f)
+                #Line format is id, sent1, sent2, sent3, sent4, option1, option2, target_id
+                for i, line in enumerate(csv_file):
+                    if i == 0:
+                        continue
+                     
+                    _, s1, s2, s3, s4, opt1, opt2, tid = line
+                         
+                    examples.append(ttdata.Example.fromlist([s1, s2, s3, s4, opt1, opt2, tid], fields))
+
+     
+            super(RocStoryClozeDataset, self).__init__(examples, fields)
+
+    
 class RocStoryDataset(ttdata.Dataset):
     'CSV containing the full RocStory dataset, used for unsupervised training'
 
@@ -294,6 +359,7 @@ class RocStoryDataset(ttdata.Dataset):
 
      
             super(RocStoryDataset, self).__init__(examples, fields)
+
 
 class RocStoryDatasetSentiment(ttdata.Dataset):
     'CSV containing the full RocStory dataset, with a sentiment tag for each sentence'

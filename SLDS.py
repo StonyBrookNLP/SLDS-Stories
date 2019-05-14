@@ -99,6 +99,7 @@ class SLDS(nn.Module):
             state logits (Tensor, [num_sents, batch, num classes]) : logits for state prediction, can be used for supervision and to calc state KL
             Z_kl (Tensor, [batch]) : kl diveragence for the Z transitions (calculated for each batch)
         """
+
         batch_size = input.size(1)
         num_sents = input.size(0)
 
@@ -128,7 +129,7 @@ class SLDS(nn.Module):
         Z_kl = self.z_kl_divergence(Z_means, prior_means, logvars, prior_vars)
         state_kl = self.state_kl_divergence(F.softmax(state_logits, dim=2), self.state_factor(S_samples))
 
-        print(torch.mean((Z_means[1] - prior_means[1])*(Z_means[1] - prior_means[1])))
+        #print(torch.mean((Z_means[1] - prior_means[1])*(Z_means[1] - prior_means[1])))
 
         return data_logits, state_logits, Z_kl, state_kl
 
@@ -264,7 +265,11 @@ class SLDS(nn.Module):
         num_sents = curr_switch_state.size(0)
 #        state_transitions = [torch.matmul(curr_switch_state[i], self.trans_matrix) for i in range(num_sents)]
 #        state_transitions = [torch.zeros(curr_switch_state.shape[1], curr_switch_state.shape[2]).cuda() + torch.Tensor([0.30, 0.02, 0.02, 0.30, 0.02, 0.02, 0.02, 0.30 ]).cuda()] + [torch.matmul(curr_switch_state[i+1].detach(), self.trans_matrix) for i in range(num_sents-1)]
-        state_transitions = [torch.zeros(curr_switch_state.shape[1], curr_switch_state.shape[2]).cuda() + torch.Tensor([0.30, 0.30, 0.40]).cuda()] + [torch.matmul(curr_switch_state[i+1].detach(), self.trans_matrix) for i in range(num_sents-1)]
+        if self.use_cuda:
+            state_transitions = [torch.zeros(curr_switch_state.shape[1], curr_switch_state.shape[2]).cuda() + torch.Tensor([0.30, 0.30, 0.40]).cuda()] + [torch.matmul(curr_switch_state[i+1].detach(), self.trans_matrix) for i in range(num_sents-1)]
+        else:
+            state_transitions = [torch.zeros(curr_switch_state.shape[1], curr_switch_state.shape[2]) + torch.Tensor([0.30, 0.30, 0.40])] + [torch.matmul(curr_switch_state[i+1].detach(), self.trans_matrix) for i in range(num_sents-1)]
+
         state_transitions = torch.stack(state_transitions, dim=0) #[num_sents, batch, encoder dim)
 
         return state_transitions

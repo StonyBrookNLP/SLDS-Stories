@@ -25,7 +25,6 @@ import sys
 import os
 
 
-
 def check_save_model_path(save_model):
     save_model_path = os.path.abspath(save_model)
     model_dirname = os.path.dirname(save_model_path)
@@ -35,7 +34,7 @@ def check_save_model_path(save_model):
         
 def generate(args):
     """
-    Train the model in the ol' fashioned way, just like grandma used to
+    Test the model in the ol' fashioned way, just like grandma used to
     Args
         args (argparse.ArgumentParser)
     """
@@ -53,15 +52,15 @@ def generate(args):
     print("\nLoading Vocab")
     vocab = du.load_vocab(args.vocab)
     print("Vocab Loaded, Size {}".format(len(vocab.stoi.keys())))
+    if args.cloze:
+        print("Loading Dataset")
+        dataset = du.RocStoryClozeDataset(args.valid_data, vocab) 
+        print("Finished Loading Dataset {} examples".format(len(dataset)))
+    else:
+        print("Loading Dataset")
+        dataset = du.RocStoryDataset(args.valid_data, vocab, test=True) 
+        print("Finished Loading Dataset {} examples".format(len(dataset)))
 
-    print("Loading Dataset")
-    dataset = du.RocStoryDataset(args.train_data, vocab, test=True) 
-#    dataset = du.RocStoryDataset(args.train_data, vocab, test=False) 
-    print("Finished Loading Dataset {} examples".format(len(dataset)))
-
-    sort_func = lambda x: max([len(x.sent_1),len(x.sent_2),len(x.sent_3),len(x.sent_4),len(x.sent_5)])
-
-#    story_batches = du.RocStoryBatches(dataset, args.batch_size, sort_key=sort_func, train=True, sort_within_batch=True, device=-1)
     story_batches = du.RocStoryBatches(dataset, 1, train=False, sort=False, device=-1)
     data_len = len(dataset)
 
@@ -80,8 +79,48 @@ def generate(args):
     model.set_use_cuda(use_cuda)
     model.eval()
 
+    if args.args.cloze:
+        print("Doing NCLOZE")
+
+        accuracy = 0.0
+        # new iterator has src, target, and target_id
+        for iteration, b in enumerate(story_batches):
+            batch1, seq_lens1, batch2, seq_lens2, tid = story_batches.combine_story_cloze(story)
+            targets1, target_lens1 = story_batches.convert_to_target(batch1, seq_lens1)
+            targets2, target_lens2 = story_batches.convert_to_target(batch2, seq_lens2)
+            if use_cuda:
+                batch1, batch2 = batch1.cuda(), batch2.cuda()
+                targets1, targets2 = targets1.cuda(), targets2.cuda()
+                target_lens1, target_lens2 = target_lens1.cuda(), target_lens2.cuda()
+     
+            with torch.no_grad():
+                text_logits = model(batch1, seq_lens1, gumbel_temp=gumbel_temp)
+            nll1, _ = compute_loss_unsupervised(text_logits, targets, target_lens, iteration, use_cuda=use_cuda)
+
+            # TODO make sure model state is init properly
+            with torch.no_grad():
+                text_logits = model(batch2, seq_lens2, gumbel_temp=gumbel_temp)
+
+            nll2, _ = compute_loss_unsupervised(text_logits, targets, target_lens, iteration, use_cuda=use_cuda)
+
+            if (nll1 < nll2 and target_id == 1) or (nll1 > nll2 and target_id == 2): 
+                accuracy += 1
+
+        print("Accuracy {}/{} == {:.4f}".format(accuracy, data_len, accuracy/data_len))
+        break # break out
+
+    print("Loading Dataset")
+    dataset = du.RocStoryDataset(args.valid_data, vocab, test=True) 
+
+    print("Finished Loading Dataset {} examples".format(len(dataset)))
+
+    story_batches = du.RocStoryBatches(dataset, 1, train=False, sort=False, device=-1)
+    data_len = len(dataset)
+
     # calculate NLL
     if args.nll:
+        print("Calculating NLL.")
+
         train_loss = 0.0
         for iteration, story in enumerate(story_batches):    
             batch, seq_lens = story_batches.combine_story(story)
@@ -98,7 +137,6 @@ def generate(args):
         nll = total_loss / data_len # batch_size is one
 
         print("NLL {:.4f}".format(nll))
-
         break # break out
 
             
@@ -122,8 +160,7 @@ def generate(args):
 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser(description='SLDS')
-    parser.add_argument('--train_data', type=str)
+    parser = argparse.ArgumentParser(description='SLDS') 
     parser.add_argument('--valid_data', type=str)
     parser.add_argument('--vocab', type=str, help='the vocabulary pickle file', default='./data/rocstory_vocab_f5.pkl')
     parser.add_argument('--seed', type=int, default=11, help='random seed') 
@@ -134,7 +171,9 @@ if __name__ == "__main__":
     parser.add_argument('-interpolate', action='store_true')
     parser.add_argument('--load_model', type=str)
     parser.add_argument('--num_samples', type=int, default=2000)
-    parser.add_argument('--nll', action='store_true', help='Calculate NLL value')    
+    parser.add_argument('--nll', action='store_true', help='Calculate NLL value')   
+    parser.add_argument('--cloze', vaction='store_true', help='Perform ncloze test')
+
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -147,9 +186,7 @@ if __name__ == "__main__":
             print("WARNING: You have a CUDA device, so you should probably run with --cuda")
         else:
             torch.cuda.manual_seed(args.seed)
-
-    # diff between train and classic: in classic pass .txt etension for files.
+ 
     generate(args)
-
 
 

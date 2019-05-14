@@ -31,7 +31,8 @@ def decode(t_matrix, states, start, end, path_len):
     path[0] = start
     last_state = end
 
-    for i in range(path_len-2, 1, -1):
+    for i in range(path_len-2, 0, -1):
+        print(i)
         path[i] = prev[i][int(last_state)]
         last_state = prev[i][int(last_state)]
     

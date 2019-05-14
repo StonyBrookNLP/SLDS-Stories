@@ -13,7 +13,7 @@ from EncDec import Encoder, Decoder
 import torch.nn.functional as F
 import data_utils as du
 from SLDS import SLDS
-from masked_cross_entropy import masked_cross_entropy
+from masked_cross_entropy import masked_cross_entropy, compute_loss_unsupervised, compute_loss_supervised
 from data_utils import EOS_TOK, SOS_TOK, PAD_TOK
 import time
 from torchtext.vocab import GloVe
@@ -27,93 +27,6 @@ def tally_parameters(model):
     n_params = sum([p.nelement() for p in model.parameters()])
     print('* number of parameters: %d' % n_params)
 
-
-def compute_loss_unsupervised(text_logits, text_targets, target_lens, Z_kl, state_kl, iteration, kld_weight, use_cuda=True): 
-    """
-    Compute the loss term 
-    Args: 
-    text_logits [num_sents, batch, seq_len, vocab size]
-    text_targets [num_sents, batch, seq_len] : the id of the true class to predict
-    target_lens [num_sents, batch] : the length of the targets
-    Z_kl [batch]
-    state_kl [batch]
-    """
-
-    num_sents = text_logits.shape[0]
-    batch_size = text_logits.shape[1]
-
-    Z_kl_mean = Z_kl.mean()
-    state_kl_mean= state_kl.mean()
-    
-    #compute CE loss for data
-    if use_cuda:
-        ce_loss = Variable(torch.Tensor([0]).cuda())
-    else:
-        ce_loss = Variable(torch.Tensor([0]))
-
-    for i in range(num_sents):
-        ce_loss += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda)
-
-    total_loss = ce_loss + kld_weight*Z_kl_mean + state_kl_mean
-    
-    print_iter_stats(iteration, total_loss, ce_loss, Z_kl_mean, state_kl_mean)
-    
-    return total_loss, ce_loss # tensor 
-
-def compute_loss_supervised(text_logits, text_targets, target_lens, Z_kl, state_logits, state_targets, iteration, kld_weight, use_cuda=True): 
-    """
-    Compute the loss term 
-    Args: 
-    text_logits [num_sents, batch, seq_len, vocab size]
-    text_targets [num_sents, batch, seq_len] : the id of the true class to predict
-    target_lens [num_sents, batch] : the length of the targets
-    state_logits [num_sents, batch, num_classes]
-    state_targets [num_sents, batch]
-    Z_kl [batch]
-    """
-
-    num_sents = text_logits.shape[0]
-    batch_size = text_logits.shape[1]
-
-    Z_kl_mean = Z_kl.mean()
-
-    
-    #compute CE loss for data
-    if use_cuda:
-        ce_loss = Variable(torch.Tensor([0]).cuda())
-        state_loss = Variable(torch.Tensor([0]).cuda())
-        state_loss_fn = torch.nn.CrossEntropyLoss().cuda()
-    else:
-        ce_loss = Variable(torch.Tensor([0]))
-        state_loss = Variable(torch.Tensor([0]))
-        state_loss_fn = torch.nn.CrossEntropyLoss()
-
-    for i in range(num_sents):
-        ce_loss += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda)
-        state_loss += state_loss_fn(state_logits[i], state_targets[i])
-
-#    if Z_kl_mean <= 20.0: #Model_try2 useses free bits
-#    if Z_kl_mean <= 1000.0 and iteration <= 10000:
-#        print("Free Bits")
-#        kld_weight = 0.0
-
-    total_loss = ce_loss + kld_weight*Z_kl_mean + state_loss
-    
-    print_iter_stats(iteration, total_loss, ce_loss, Z_kl_mean, state_loss)
-    
-    return total_loss, ce_loss, state_loss # tensor 
-   
-
-
-def print_iter_stats(iteration, total_loss, ce_loss, Z_kl, state_kl):
-
-#    if iteration % args.log_every == 0 and iteration != 0:
-    if True:
-        print("Iteration: ", iteration) 
-        print("Total: ", total_loss.cpu().data[0])
-        print("CE: ", ce_loss.cpu().data[0])
-        print("Z KL Div: ", Z_kl.cpu().data[0])
-        print("State KL Div: ", state_kl.cpu().data[0])
 
 def check_save_model_path(save_model):
     save_model_path = os.path.abspath(save_model)
