@@ -89,12 +89,18 @@ def generate(args):
         accuracy = 0.0
         # new iterator has src, target, and target_id
         for iteration, story in enumerate(story_batches):
+            if iteration == 5:
+                break
+            if iteration%200 == 0:
+                print(iteration)
             batch1, seq_lens1, batch2, seq_lens2, tid = story_batches.combine_story_cloze(story)
             #print(type(tid[0]), tid[0])
             targets1, target_lens1 = story_batches.convert_to_target(batch1, seq_lens1)
             targets2, target_lens2 = story_batches.convert_to_target(batch2, seq_lens2)
             if use_cuda:
+                print("coming here")
                 batch1, batch2 = batch1.cuda(), batch2.cuda()
+                seq_lens1, seq_lens2 = seq_lens1.cuda(), seq_lens2.cuda()
                 targets1, targets2 = targets1.cuda(), targets2.cuda()
                 target_lens1, target_lens2 = target_lens1.cuda(), target_lens2.cuda()
 
@@ -107,22 +113,27 @@ def generate(args):
             with torch.no_grad():
                 text_logits, state_logits, Z_kl, state_kl = model(batch2, seq_lens2, gumbel_temp=gumbel_temp)
             nll2, _ = compute_loss_unsupervised(text_logits, targets2, target_lens2, Z_kl, state_kl, iteration, kld_weight, use_cuda=use_cuda, do_print=False)
-           
+          
+            print("nll1 {} nll2 {} tid {}".format(nll1, nll2, tid))
             if (nll1 < nll2 and tid[0] == "1") or (nll1 > nll2 and tid[0] == "2"): 
                 accuracy += 1
         
-        print("Accuracy {}/{} == {:.4f}".format(accuracy, data_len, accuracy/data_len))
+        print("Accuracy {}/{} = {:.4f}".format(accuracy, data_len, accuracy/data_len))
         exit()
     
 
     # TODO what all sentences are included?? 
     # calculate NLL
     if args.nll:
+        print("Calculating NLL")
         nlls = []
         
         for n in range(args.nll_samples):
+            print("**{}**".format(n))
             total_loss = 0.0
             for iteration, story in enumerate(story_batches):
+                if iteration%200 == 0:
+                    print(iteration)
                 batch, seq_lens = story_batches.combine_story(story)
                 targets, target_lens = story_batches.convert_to_target(batch, seq_lens)
 

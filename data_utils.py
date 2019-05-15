@@ -422,3 +422,33 @@ def transform(output, dict):
     return out
 
 
+class S2SSentenceDataset(ttdata.Dataset):
+    'Reads from 1 file and extracts src and tgt. Data set which has a single sentence per line'
+
+    def __init__(self, path, input_vocab, output_vocab, src_seq_length=50, min_seq_length=1):
+
+        """
+        Args
+            path (str) : Filename of text file with dataset
+            vocab (Torchtext Vocab object)
+            filter_pred (callable) : Only use examples for which filter_pred(example) is TRUE
+        """
+        text_field = ExtendableField(input_vocab)
+        target_field = ExtendableField(output_vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+      
+        fields = [('text', text_field), ('target', target_field)]
+        examples = []
+        with open(pth, 'r') as f: 
+            csv_file = csv.reader(f)
+            for line in csv_file: 
+                text, target = line[-4:], line[2:7]
+                text = " ".join(text).strip()
+                target = " ".join(target).strip()
+                print(text, "|||", target)
+                examples.append(ttdata.Example.fromlist([text, target], fields))
+
+        def filter_pred(example):
+            return len(example.text) <= src_seq_length and len(example.text) >= min_seq_length
+ 
+        super(SentenceDataset, self).__init__(examples, fields, filter_pred=filter_pred)
+
