@@ -47,9 +47,7 @@ class S2SWithA(nn.Module):
         self.out_pad_idx = self.out_vocab.stoi[PAD_TOK]
         self.use_cuda = use_cuda
         self.enc_hsize = enc_hsize
-        self.dec_hsize = dec_hsize
-
-        
+        self.dec_hsize = dec_hsize        
         if self.bidir:
             print("Bidirectional ON")
             bidir = 2
@@ -65,7 +63,7 @@ class S2SWithA(nn.Module):
         
         self.decoder = Decoder(self.embd_size, self.dec_hsize, out_embedding, self.cell_type, self.layers, attn_dim=(self.enc_hsize*bidir, self.dec_hsize), use_cuda=use_cuda, dropout=dropout)
 
-        self.bridge = nn.Linear(bidir*layers*self.enc_hsize, layers*self.dec_hsize)
+        #self.bridge = nn.Linear(bidir*layers*self.enc_hsize, layers*self.dec_hsize)
 
         self.logits_out= nn.Linear(self.dec_hsize, self.out_vocab_size) #Weights to calculate logits, out [batch, vocab_size]
                
@@ -100,7 +98,7 @@ class S2SWithA(nn.Module):
         #print("input {}, ehidden {}, seq_lens {}, enc_output {}".format(input.size(), ehidden.size(), seq_lens.size(), enc_output.size()))
         
         # [layers*bidir, batch_size, hidden_size] 
-        dhidden = self.bridge(ehidden.transpose(0, 1).contiguous().view(batch_size, -1)).view(-1, self.layers, self.dec_hsize).transpose(0,1)
+        dhidden = ehidden #self.bridge(ehidden.transpose(0, 1).contiguous().view(batch_size, -1)).view(-1, self.layers, self.dec_hsize).transpose(0,1)
         #print("dhidden size {} type {}".format(dhidden.size(), type(dhidden)))
 
         #Decode output one step at a time
@@ -126,20 +124,18 @@ class S2SWithA(nn.Module):
     def do_train(self, input, batch_size, dhidden, enc_output, return_hid=False, use_eos=True):
         #print("do_train input {}".format(input.size()))
         dec_outputs = []
-
-        #if use_eos:
-            #input_size = input.size(1) + 1
-        #else:
-        input_size = input.size(1) #Dont need to process last since no eos
-
-        for i in range(input_size):
+ 
+        input_size = input.size(1)
+        #print(f"input size {input_size}")       
+        for i in range(input_size): # not processing EOS
             # Choose input for this step
             if i == 0:
                 tens = torch.LongTensor(input.shape[0]).zero_() + self.sos_idx   
                 dec_input = variable(tens) #Decoder input init with sos 
             else:  
                 dec_input = input[:, i-1]
-
+            #print(f"i {i} dec input {dec_input}")
+     
             dec_output, dhidden = self.decoder(dec_input, dhidden, enc_output) 
             dec_outputs += [dec_output]
  

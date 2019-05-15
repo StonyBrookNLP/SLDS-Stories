@@ -434,21 +434,22 @@ class S2SSentenceDataset(ttdata.Dataset):
             filter_pred (callable) : Only use examples for which filter_pred(example) is TRUE
         """
         text_field = ExtendableField(input_vocab)
-        target_field = ExtendableField(output_vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
+        target_field = ExtendableField(output_vocab, tokenize="spacy", eos_token=EOS_TOK)
       
         fields = [('text', text_field), ('target', target_field)]
         examples = []
-        with open(pth, 'r') as f: 
+        with open(path, 'r') as f: 
             csv_file = csv.reader(f)
             for line in csv_file: 
-                text, target = line[-4:], line[2:7]
+                text, target = line[-5:], line[2:7]
                 text = " ".join(text).strip()
                 target = " ".join(target).strip()
-                print(text, "|||", target)
+                #print(text, "|||", target)
                 examples.append(ttdata.Example.fromlist([text, target], fields))
+                #break
 
         def filter_pred(example):
             return len(example.text) <= src_seq_length and len(example.text) >= min_seq_length
  
-        super(SentenceDataset, self).__init__(examples, fields, filter_pred=filter_pred)
+        super(S2SSentenceDataset, self).__init__(examples, fields, filter_pred=filter_pred)
 

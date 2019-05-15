@@ -1,2 +1,4 @@
 /data/*.csv
 __pycache__/
+S2S/__pycache__/
+S2S/models/

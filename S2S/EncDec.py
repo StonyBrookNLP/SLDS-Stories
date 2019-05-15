@@ -9,9 +9,8 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from utils import variable
 
 class EncDecBase(nn.Module):
-    def __init__(self, emb_size, hidden_size, embeddings=None, cell_type="GRU", layers=1, bidir=False, use_cuda=True):
+    def __init__(self, emb_size, hidden_size, embeddings=None, cell_type="GRU", layers=2, bidir=False, use_cuda=True):
             """
-            For NOW, Only supporting GRU with 1 layer
             Args:
                 emb_size (int) : size of input embeddings
                 hidden_size (int) : size of hidden 
@@ -47,7 +46,7 @@ class EncDecBase(nn.Module):
         return hidden
 
 class Encoder(EncDecBase):
-    'Encoder class to use with the DVae'
+    'Encoder class'
     def forward(self, input, hidden, seq_lens, use_packed=True):
         """
         Encode an entire sequence
@@ -75,7 +74,7 @@ class Encoder(EncDecBase):
 
 
 class Decoder(EncDecBase):
-    'Decoder (InputFeed) class to use with the DVae'
+    'Decoder (InputFeed) class'
 
     def __init__(self, emb_size, hidden_size, embeddings=None, cell_type="GRU", layers=1, attn_dim=-1, use_cuda=True, dropout=0.0):
 
