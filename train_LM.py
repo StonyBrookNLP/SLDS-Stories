@@ -13,7 +13,7 @@ from EncDec import Encoder, Decoder
 import torch.nn.functional as F
 import data_utils as du
 from LM import LM
-from masked_cross_entropy import masked_cross_entropy
+from masked_cross_entropy import masked_cross_entropy, compute_loss_unsupervised_LM
 from data_utils import EOS_TOK, SOS_TOK, PAD_TOK
 import time
 from torchtext.vocab import GloVe
@@ -26,38 +26,6 @@ import os
 def tally_parameters(model):
     n_params = sum([p.nelement() for p in model.parameters()])
     print('* number of parameters: %d' % n_params)
-
-
-def compute_loss_unsupervised(text_logits, text_targets, target_lens, iteration, use_cuda=True): 
-    """
-    Compute the loss term 
-    Args: 
-    text_logits [num_sents, batch, seq_len, vocab size]
-    text_targets [num_sents, batch, seq_len] : the id of the true class to predict
-    target_lens [num_sents, batch] : the length of the targets
-    Z_kl [batch]
-    state_kl [batch]
-    """
-
-    num_sents = text_logits.shape[0]
-    batch_size = text_logits.shape[1]
-
-    
-    #compute CE loss for data
-    if use_cuda:
-        ce_loss = Variable(torch.Tensor([0]).cuda())
-    else:
-        ce_loss = Variable(torch.Tensor([0]))
-
-    for i in range(num_sents):
-        ce_loss += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda)
-
-    total_loss = ce_loss 
-    
-    print_iter_stats(iteration, total_loss, ce_loss, 0, 0)
-    
-    return total_loss, ce_loss # tensor 
-   
 
 
 def print_iter_stats(iteration, total_loss, ce_loss, Z_kl, state_kl):
@@ -210,7 +178,7 @@ def train(args):
 #        gumbel_weight = min(1.0, iteration / 3000)
 #        gumbel_temp= 1.0*(1-gumbel_weight) + 0.5*gumbel_weight
         
-        loss, _ = compute_loss_unsupervised(text_logits, targets, target_lens, iteration, use_cuda=use_cuda)
+        loss, _ = compute_loss_unsupervised_LM(text_logits, targets, target_lens, iteration, use_cuda=use_cuda)
  
         # backward propagation
         loss.backward()

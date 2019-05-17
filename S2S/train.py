@@ -20,37 +20,14 @@ def get_data_loader(inp_vocab, out_vocab):
     """
     train and test loaders are each dict with key as the task_num. Total key length as num_task.
     """       
-    train_dataset = du.S2SSentenceDataset(args.train_data, inp_vocab, out_vocab, args.src_seq_len)                 
+    train_dataset = du.S2SSentenceDataset(args.train_data, inp_vocab, out_vocab)                 
     train_loader = BatchIter(train_dataset, args.batch_size, sort_key=lambda x:len(x.text), train=True, sort_within_batch=True, device=-1)
  
     test_loader = None
-    #test_dataset = du.S2SSentenceDataset(args.test_data, inp_vocab, out_vocab, args.src_seq_len)
+    #test_dataset = du.S2SSentenceDataset(args.test_data, inp_vocab, out_vocab)
     # batch_size is set to 1 
-    #test_loader = BatchIter(test_dataset, 1, sort_key=lambda x:len(x.text), train=False, sort_within_batch=True, device=-1)
- 
+    #test_loader = BatchIter(test_dataset, 1, sort_key=lambda x:len(x.text), train=False, sort_within_batch=True, device=-1) 
     return train_loader, test_loader
-
-
-def test(model, test_loader):
-    
-    # set to eval mode
-    model.eval()
-
-    valid_loss = 0.0
-    for batch_iter, batch in enumerate(test_loader): # should go over data only once
-        input, input_lens = batch.text
-        target, target_lens = batch.target 
-        input, input_lens, target, target_lens = variable(input), variable(input_lens), variable(target), variable(target_lens)
-
-        with torch.no_grad():
-            logits = model(input, input_lens, target) # this max_len includes eos
- 
-        valid_loss += masked_cross_entropy(logits, target, target_lens)
-
-    # set to train mode
-    model.train()
-
-    return valid_loss / len(test_loader.dataset)
 
 
 def train(args):
@@ -62,9 +39,13 @@ def train(args):
  
     print("Preparing the data loader.")
     train_loader, test_loader = get_data_loader(inp_vocab, out_vocab)
-
-    print("Starting the learning process.")
-    model = S2SWithA(args.emb_size, args.enc_hid_size, args.dec_hid_size, inp_vocab, out_vocab, layers=args.nlayers, use_cuda=args.cuda, bidir=args.bidir, dropout=args.dropout)
+ 
+    if args.load_model:
+        print("Loading the model")
+        model = torch.load(args.load_model)
+    else:
+        print("Creating the model")
+        model = S2SWithA(args.emb_size, args.enc_hid_size, args.dec_hid_size, inp_vocab, out_vocab, layers=args.nlayers, use_cuda=args.cuda, bidir=args.bidir, dropout=args.dropout)
 
     # do cuda transfer before constructing the optimizer
     if torch.cuda.is_available() and args.cuda:
@@ -74,9 +55,15 @@ def train(args):
     # set to train mode
     model.train()
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    if args.load_opt:
+        print("Loading the optimizer")
+        optimizer = torch.load(args.load_opt)
+    else:
+        print("Creating the optimizer")
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    c_epoch = 0
+
+    c_epoch = args.start_epoch
     train_loss = 0.0
     iters_per_epoch = int(np.ceil(len(train_loader.dataset) / float(args.batch_size)))
     for batch_iter, batch in enumerate(train_loader): # continues forever (shuffling every epoch) till args.epochs finished
@@ -139,7 +126,7 @@ if __name__ == "__main__":
     parser.add_argument('--dropout', type=float, default=0.1, help='dropout')
     parser.add_argument('--bidir', type=bool, default=False, help='Use bidirectional encoder') 
     parser.add_argument('--batch_size', type=int, default=32, metavar='N', help='batch size')
-    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--epochs', type=int, default=200)
     parser.add_argument('--validate_after', type=int, default=2000)
     parser.add_argument('--log_after', type=int, default=100)
     parser.add_argument('--clip', type=float, default=5.0, help='gradient clipping')
@@ -148,7 +135,9 @@ if __name__ == "__main__":
     parser.add_argument('--src_seq_len', type=int, default=50, help="Maximum source sequence length")
     parser.add_argument('--max_decode_len', type=int, default=50, help='Maximum prediction length.')
     parser.add_argument('--expt_name', type=str, default="new_expt", help='Parent folder under which all files will be created fo rthe expt..')
-    
+    parser.add_argument('--load_model', type=str)
+    parser.add_argument('--load_opt', type=str)  
+    parser.add_argument('--start_epoch', type=int, default=0)
     args = parser.parse_args()
     print("\nAll args: {}\n".format(args))
 

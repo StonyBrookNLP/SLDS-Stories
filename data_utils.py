@@ -279,7 +279,12 @@ class RocStoryBatches(ttdata.Iterator):
 
 class RocStoryClozeDataset(ttdata.Dataset):
 
-    def __init__(self, path, vocab, preprocessed_examples=None):
+    def __init__(self, path, vocab, preprocessed_examples=None, skip_header=True):
+
+        if skip_header:
+            print("Loading validation/test dataset. Skipping header.")
+        else:
+            print("NOT skipping header.")
 
         sent_1 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
         sent_2 = ExtendableField(vocab, init_token=SOS_TOK, eos_token=EOS_TOK, tokenize="spacy")
@@ -293,7 +298,7 @@ class RocStoryClozeDataset(ttdata.Dataset):
         examples = []
 
         if preprocessed_examples is not None:
-            super(RocStoryDataset, self).__init__(preprocessed_examples, fields)
+            super(RocStoryClozeDataset, self).__init__(preprocessed_examples, fields)
             
         else: 
             print("Loading RocStories (Validation/Testing) Set")
@@ -425,14 +430,17 @@ def transform(output, dict):
 class S2SSentenceDataset(ttdata.Dataset):
     'Reads from 1 file and extracts src and tgt. Data set which has a single sentence per line'
 
-    def __init__(self, path, input_vocab, output_vocab, src_seq_length=50, min_seq_length=1):
+    def __init__(self, path, input_vocab, output_vocab, skip_first=False):
 
         """
         Args
             path (str) : Filename of text file with dataset
-            vocab (Torchtext Vocab object)
-            filter_pred (callable) : Only use examples for which filter_pred(example) is TRUE
+            vocab (Torchtext Vocab object) 
         """
+        if skip_header:
+            print("Loading validation/testing dataset. Skipping header.")
+        else:
+            print("Loading Training dataset. NOT Skipping header.")
         text_field = ExtendableField(input_vocab)
         target_field = ExtendableField(output_vocab, tokenize="spacy", eos_token=EOS_TOK)
       
@@ -440,6 +448,8 @@ class S2SSentenceDataset(ttdata.Dataset):
         examples = []
         with open(path, 'r') as f: 
             csv_file = csv.reader(f)
+            if skip_first:
+                next(csv_file) # skipping the header in val file
             for line in csv_file: 
                 text, target = line[-5:], line[2:7]
                 text = " ".join(text).strip()
@@ -447,9 +457,6 @@ class S2SSentenceDataset(ttdata.Dataset):
                 #print(text, "|||", target)
                 examples.append(ttdata.Example.fromlist([text, target], fields))
                 #break
-
-        def filter_pred(example):
-            return len(example.text) <= src_seq_length and len(example.text) >= min_seq_length
  
         super(S2SSentenceDataset, self).__init__(examples, fields, filter_pred=filter_pred)
 

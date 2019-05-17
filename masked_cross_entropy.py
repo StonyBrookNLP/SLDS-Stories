@@ -8,7 +8,39 @@ from torch.autograd import Variable
 import torch.nn.functional as functional 
 
 
-def compute_loss_unsupervised(text_logits, text_targets, target_lens, Z_kl, state_kl, iteration, kld_weight, use_cuda=True, do_print=True): 
+def compute_loss_unsupervised_LM(text_logits, text_targets, target_lens, iteration, use_cuda=True, do_print=True): 
+    """
+    Compute the loss term 
+    Args: 
+    text_logits [num_sents, batch, seq_len, vocab size]
+    text_targets [num_sents, batch, seq_len] : the id of the true class to predict
+    target_lens [num_sents, batch] : the length of the targets
+    Z_kl [batch]
+    state_kl [batch]
+    """
+
+    num_sents = text_logits.shape[0]
+    batch_size = text_logits.shape[1]
+
+    
+    #compute CE loss for data
+    if use_cuda:
+        ce_loss = Variable(torch.Tensor([0]).cuda())
+    else:
+        ce_loss = Variable(torch.Tensor([0]))
+
+    for i in range(num_sents):
+        ce_loss += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda)
+
+    total_loss = ce_loss 
+    
+    if do_print:
+        print_iter_stats(iteration, total_loss, ce_loss, 0, 0)
+    
+    return total_loss, ce_loss # tensor 
+ 
+
+def compute_loss_unsupervised(text_logits, text_targets, target_lens, Z_kl, state_kl, iteration, kld_weight, use_cuda=True, do_print=True, last_loss=False): 
     """
     Compute the loss term 
     Args: 
@@ -31,13 +63,18 @@ def compute_loss_unsupervised(text_logits, text_targets, target_lens, Z_kl, stat
     else:
         ce_loss = Variable(torch.Tensor([0]))
 
+    # used this in ncloze
+    if last_loss:
+        last_ce_loss = masked_cross_entropy(text_logits[4], text_targets[4], target_lens[4], use_cuda=use_cuda)
+        return last_ce_loss
+
     for i in range(num_sents):
         ce_loss += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda)
 
     total_loss = ce_loss + kld_weight*Z_kl_mean + state_kl_mean
     if do_print:
         print_iter_stats(iteration, total_loss, ce_loss, Z_kl_mean, state_kl_mean)
-    
+ 
     return total_loss, ce_loss # tensor 
 
 

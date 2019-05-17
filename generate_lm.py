@@ -14,7 +14,7 @@ import torch.nn.functional as F
 import data_utils as du
 from LM import LM
 
-from masked_cross_entropy import masked_cross_entropy
+from masked_cross_entropy import masked_cross_entropy, compute_loss_unsupervised_LM
 from data_utils import EOS_TOK, SOS_TOK, PAD_TOK, transform
 import time
 from torchtext.vocab import GloVe
@@ -75,69 +75,43 @@ def generate(args):
                                       [0.20, 0.05, 0.10, 0.10, 0.10, 0.10,0.25, 0.10]])
 
     print("Loading the Model")
-    model = torch.load(args.load_model, map_location='cpu')
+    if use_cuda:
+        model = torch.load(args.load_model)
+    else:
+        model = torch.load(args.load_model, map_location='cpu')
     model.set_use_cuda(use_cuda)
     model.eval()
+    gumbel_temp =1.0
 
-    if args.args.cloze:
+    if args.cloze:
         print("Doing NCLOZE")
 
         accuracy = 0.0
-        # new iterator has src, target, and target_id
-        for iteration, b in enumerate(story_batches):
-            batch1, seq_lens1, batch2, seq_lens2, tid = story_batches.combine_story_cloze(story)
-            targets1, target_lens1 = story_batches.convert_to_target(batch1, seq_lens1)
-            targets2, target_lens2 = story_batches.convert_to_target(batch2, seq_lens2)
-            if use_cuda:
-                batch1, batch2 = batch1.cuda(), batch2.cuda()
-                targets1, targets2 = targets1.cuda(), targets2.cuda()
-                target_lens1, target_lens2 = target_lens1.cuda(), target_lens2.cuda()
-     
-            with torch.no_grad():
-                text_logits = model(batch1, seq_lens1, gumbel_temp=gumbel_temp)
-            nll1, _ = compute_loss_unsupervised(text_logits, targets, target_lens, iteration, use_cuda=use_cuda)
-
-            # TODO make sure model state is init properly
-            with torch.no_grad():
-                text_logits = model(batch2, seq_lens2, gumbel_temp=gumbel_temp)
-
-            nll2, _ = compute_loss_unsupervised(text_logits, targets, target_lens, iteration, use_cuda=use_cuda)
-
-            if (nll1 < nll2 and target_id == 1) or (nll1 > nll2 and target_id == 2): 
-                accuracy += 1
-
         print("Accuracy {}/{} == {:.4f}".format(accuracy, data_len, accuracy/data_len))
-        break # break out
+        exit()
 
-    print("Loading Dataset")
-    dataset = du.RocStoryDataset(args.valid_data, vocab, test=True) 
-
-    print("Finished Loading Dataset {} examples".format(len(dataset)))
-
-    story_batches = du.RocStoryBatches(dataset, 1, train=False, sort=False, device=-1)
-    data_len = len(dataset)
 
     # calculate NLL
     if args.nll:
         print("Calculating NLL.")
-
-        train_loss = 0.0
+    
+        total_loss = 0.0
         for iteration, story in enumerate(story_batches):    
             batch, seq_lens = story_batches.combine_story(story)
             targets, target_lens = story_batches.convert_to_target(batch, seq_lens)
 
             if use_cuda:
                 batch = batch.cuda()
-                targets = targets.cuda()
-                targen_lens= target_lens.cuda()
+                targets, targen_lens = targets.cuda(), target_lens.cuda()
 
             text_logits = model(batch, seq_lens, gumbel_temp=gumbel_temp)
-            loss, _ = compute_loss_unsupervised(text_logits, targets, target_lens, iteration, use_cuda=use_cuda)
+            loss, _ = compute_loss_unsupervised_LM(text_logits, targets, target_lens, iteration, use_cuda=use_cuda, do_print=False)
             total_loss += loss.item()
-        nll = total_loss / data_len # batch_size is one
 
+        nll = total_loss / data_len 
         print("NLL {:.4f}".format(nll))
-        break # break out
+
+        exit()
 
             
     for iteration, story in enumerate(story_batches): 
@@ -171,8 +145,8 @@ if __name__ == "__main__":
     parser.add_argument('-interpolate', action='store_true')
     parser.add_argument('--load_model', type=str)
     parser.add_argument('--num_samples', type=int, default=2000)
-    parser.add_argument('--nll', action='store_true', help='Calculate NLL value')   
-    parser.add_argument('--cloze', vaction='store_true', help='Perform ncloze test')
+    parser.add_argument('--nll', action='store_true', help='Calculate NLL value')  
+    parser.add_argument('--cloze', action='store_true', help='Perform ncloze test')
 
     args = parser.parse_args()
 

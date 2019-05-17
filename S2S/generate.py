@@ -1,7 +1,17 @@
 #########
-# WIP
+# code for S2S inference
 ########
-
+import sys
+sys.path.append('../')
+import random
+import numpy as np
+import argparse
+import torch
+from utils import variable
+import data_utils as du
+from s2sa import S2SWithA
+from torchtext.data import Iterator as BatchIter
+from data_utils import EOS_TOK, SOS_TOK, PAD_TOK
 
 def generate(args):
     """
@@ -11,77 +21,47 @@ def generate(args):
     """
 
     #Load the vocab
-    vocab = du.load_vocab(args.vocab)
-    eos_id = vocab.stoi[EOS_TOK]
-    pad_id = vocab.stoi[PAD_TOK]
- 
+    inp_vocab = du.sentiment_label_vocab()
+    out_vocab = du.load_vocab(args.out_vocab)
+    eos_id = out_vocab.stoi[EOS_TOK]
     
-    test_dataset = du.SentenceDataset(args.test_data[task], inp_vocab, out_vocab, args.src_seq_len, add_eos=True) 
+    if args.test_data:
+        # EXPLICITLY skip the header in val
+        test_dataset = du.S2SSentenceDataset(args.test_data, inp_vocab, out_vocab, skip_header=True) 
         # batch_size is set to 1 rather than args.batch_size
-    test_loader[task] = BatchIter(test_dataset, 1, sort_key=lambda x:len(x.text), train=False, sort_within_batch=True, device=-1)  
-    data_len = len(dataset)
+        test_loader = BatchIter(test_dataset, 1, sort_key=lambda x:len(x.text), train=False, sort_within_batch=True, device=-1)  
+        data_len = len(test_dataset)
 
     #Load the model 
-    model = torch.load_state_dict(torch.load(args.load_model))
+    model = torch.load(args.load_model)
 
     model.eval()
 
     #sample_outputs(model, vocab)
-    decode(args, model, batches, vocab)
+    for batch_iter, batch in enumerate(test_loader): 
+        input, input_lens = batch.text
+        target, target_lens = batch.target
+        input, input_lens, target = variable(input), variable(input_lens), variable(target)
 
-
-def decode(args, model, batches, vocab):
-
-    for batch_iter, bl in enumerate(batches):
-        input, input_lens = bl.text
-        target, target_lens = bl.target 
-        batch = variable(input, volatile=True)
-       
         with torch.no_grad():
-            outputs = model(input, input_lens, str_out=True, max_len_decode=args.max_len_decode)
-
-        print("TRUE: {}".format(transform(batch.data.squeeze(), vocab.itos)))
-        print("Decoded: {}\n\n".format(transform(outputs, vocab.itos)))
-
-
-def transform(output, dict):
-    out = ""
-    for i in output:
-        out += " " + dict[i]
-    return out
+            outputs = model(input, input_lens, target, str_out=True, max_len_decode=target_lens.item())
+    
+        print("Input: {}".format(du.transform(input.squeeze().tolist(), inp_vocab.itos)))  
+        print("TRUE: {}".format(du.transform(target.squeeze().tolist(), out_vocab.itos)))
+        print("Decoded: {}\n\n".format(du.transform(outputs, out_vocab.itos)))
 
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='DAVAE')
-
-    args = parser.parse_args()
+    parser = argparse.ArgumentParser(description='S2S')
     parser.add_argument('--load_model', type=str)
-
-
-    parser.add_argument('--test_data', type=str, nargs='+', help="Pass test files for all the tasks")
-    parser.add_argument('--inp_vocab', type=str, help='the input vocabulary pickle file')
-    parser.add_argument('--out_vocab', type=str, help='the output vocabulary pickle file')
-    parser.add_argument('--sample_size', type=int, default=200, help='sample size')
-    parser.add_argument('--num_task', type=int, default=2, help='number of tasks to learn')
-
-    parser.add_argument('--emb_size', type=int, default=300, help='size of word embeddings')
-    parser.add_argument('--enc_hid_size', type=int, default=512, help='size of encoder hidden')
-    parser.add_argument('--dec_hid_size', type=int, default=512, help='size of encoder hidden')
-    parser.add_argument('--nlayers', type=int, default=1, help='number of layers')
-    
-    parser.add_argument('--batch_size', type=int, default=1, metavar='N', help='batch size')
+    parser.add_argument('--test_data', type=str)
+    parser.add_argument('--out_vocab', type=str, help='the output vocabulary pickle file', default='../data/rocstory_vocab_f5.pkl') 
     parser.add_argument('--seed', type=int, default=11, help='random seed') 
     parser.add_argument('--cuda', action='store_true', help='use CUDA')
-    parser.add_argument('--ewc', action='store_true', help='use EWC penalty for subsequent tasks')
-    parser.add_argument('--bidir', type=bool, default=False, help='Use bidirectional encoder') 
     parser.add_argument('--src_seq_len', type=int, default=50, help="Maximum source sequence length")
     parser.add_argument('--max_decode_len', type=int, default=50, help='Maximum prediction length.')
-    parser.add_argument('--save_model', default='model', help="""Model filename""") 
-    parser.add_argument('--use_pretrained', type=bool, default=True, help='Use pretrained glove vectors') 
-
-
-
+    args = parser.parse_args()
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -90,7 +70,7 @@ if __name__ == "__main__":
     if torch.cuda.is_available() and args.cuda:
         torch.cuda.manual_seed(args.seed)
 
-    generate()
+    generate(args)
 
 
 

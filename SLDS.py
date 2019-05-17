@@ -337,7 +337,7 @@ class SLDS(nn.Module):
 
         num_sents = input.size(0)
         batch_size = input.size(1)
-
+        
         encoded_sents = []
         ehidden = self.sentence_encode_rnn.initHidden(batch_size)
 
@@ -466,6 +466,8 @@ class SLDS(nn.Module):
             
         outputs = []
         prev_output = Variable(torch.LongTensor(1).zero_() + self.sos_idx)
+        if self.use_cuda:
+            prev_output = prev_output.cuda()
 
         for i in range(max_decode): 
             dec_input = prev_output
