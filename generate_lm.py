@@ -24,13 +24,6 @@ import glob
 import sys
 import os
 
-
-def check_save_model_path(save_model):
-    save_model_path = os.path.abspath(save_model)
-    model_dirname = os.path.dirname(save_model_path)
-    if not os.path.exists(model_dirname):
-        os.makedirs(model_dirname)
-
         
 def generate(args):
     """
@@ -96,20 +89,26 @@ def generate(args):
         print("Calculating NLL.")
     
         total_loss = 0.0
+        total_num_story, total_num_words = 0, 0
         for iteration, story in enumerate(story_batches):    
             batch, seq_lens = story_batches.combine_story(story)
             targets, target_lens = story_batches.convert_to_target(batch, seq_lens)
+            
+            total_num_words += torch.sum(target_lens).item()
+            total_num_story += 1
 
             if use_cuda:
                 batch = batch.cuda()
                 targets, targen_lens = targets.cuda(), target_lens.cuda()
 
             text_logits = model(batch, seq_lens, gumbel_temp=gumbel_temp)
-            loss, _ = compute_loss_unsupervised_LM(text_logits, targets, target_lens, iteration, use_cuda=use_cuda, do_print=False)
-            total_loss += loss.item()
+            ce_loss_story = compute_loss_unsupervised_LM(text_logits, targets, target_lens, iteration, use_cuda=use_cuda, do_print=False, test=False)
 
-        nll = total_loss / data_len 
-        print("NLL {:.4f}".format(nll))
+            total_loss += ce_loss_story.item()
+
+        nll = total_loss / total_num_story
+        ppl = np.exp(total_loss / total_num_words)
+        print("NLL {:.4f} PPL {:.4f} Num story {}, and Num words {}".format(nll, ppl, total_num_story, total_num_words))
 
         exit()
 

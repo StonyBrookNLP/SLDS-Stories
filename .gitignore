@@ -4,3 +4,4 @@ S2S/__pycache__/
 S2S/models/
 refs/
 gpu.sh
+refs_val/

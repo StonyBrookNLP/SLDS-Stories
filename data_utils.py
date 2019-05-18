@@ -430,7 +430,7 @@ def transform(output, dict):
 class S2SSentenceDataset(ttdata.Dataset):
     'Reads from 1 file and extracts src and tgt. Data set which has a single sentence per line'
 
-    def __init__(self, path, input_vocab, output_vocab, skip_first=False):
+    def __init__(self, path, input_vocab, output_vocab, skip_header=False):
 
         """
         Args
@@ -448,7 +448,8 @@ class S2SSentenceDataset(ttdata.Dataset):
         examples = []
         with open(path, 'r') as f: 
             csv_file = csv.reader(f)
-            if skip_first:
+            if skip_header:
+                print("SKIPPING THE HEADER")
                 next(csv_file) # skipping the header in val file
             for line in csv_file: 
                 text, target = line[-5:], line[2:7]
@@ -458,5 +459,5 @@ class S2SSentenceDataset(ttdata.Dataset):
                 examples.append(ttdata.Example.fromlist([text, target], fields))
                 #break
  
-        super(S2SSentenceDataset, self).__init__(examples, fields, filter_pred=filter_pred)
+        super(S2SSentenceDataset, self).__init__(examples, fields)
 

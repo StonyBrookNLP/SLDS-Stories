@@ -8,7 +8,7 @@ from torch.autograd import Variable
 import torch.nn.functional as functional 
 
 
-def compute_loss_unsupervised_LM(text_logits, text_targets, target_lens, iteration, use_cuda=True, do_print=True): 
+def compute_loss_unsupervised_LM(text_logits, text_targets, target_lens, iteration, use_cuda=True, do_print=True, test=False): 
     """
     Compute the loss term 
     Args: 
@@ -32,6 +32,10 @@ def compute_loss_unsupervised_LM(text_logits, text_targets, target_lens, iterati
     for i in range(num_sents):
         ce_loss += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda)
 
+    #nll calculation
+    if test:
+        return ce_loss # story level
+
     total_loss = ce_loss 
     
     if do_print:
@@ -40,7 +44,7 @@ def compute_loss_unsupervised_LM(text_logits, text_targets, target_lens, iterati
     return total_loss, ce_loss # tensor 
  
 
-def compute_loss_unsupervised(text_logits, text_targets, target_lens, Z_kl, state_kl, iteration, kld_weight, use_cuda=True, do_print=True, last_loss=False): 
+def compute_loss_unsupervised(text_logits, text_targets, target_lens, Z_kl, state_kl, iteration, kld_weight, use_cuda=True, do_print=True, last_loss=False, test=False): 
     """
     Compute the loss term 
     Args: 
@@ -68,6 +72,14 @@ def compute_loss_unsupervised(text_logits, text_targets, target_lens, Z_kl, stat
         last_ce_loss = masked_cross_entropy(text_logits[4], text_targets[4], target_lens[4], use_cuda=use_cuda)
         return last_ce_loss
 
+    # used in nll calculation
+    if test: 
+        assert test, "test arg must be True when calculating NLL."
+        for i in range(num_sents):
+            ce_loss_story += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda, test=True)   
+        return  ce_loss_story, torch.sum(Z_kl) # both story level
+
+
     for i in range(num_sents):
         ce_loss += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda)
 
@@ -75,7 +87,7 @@ def compute_loss_unsupervised(text_logits, text_targets, target_lens, Z_kl, stat
     if do_print:
         print_iter_stats(iteration, total_loss, ce_loss, Z_kl_mean, state_kl_mean)
  
-    return total_loss, ce_loss # tensor 
+    return total_loss, ce_loss  # tensor 
 
 
 def compute_loss_supervised(text_logits, text_targets, target_lens, Z_kl, state_logits, state_targets, iteration, kld_weight, use_cuda=True, do_print=True): 
@@ -148,7 +160,7 @@ def _sequence_mask(sequence_length, max_len=None):
                          .expand_as(seq_range_expand))
     return seq_range_expand < seq_length_expand
 
-def masked_cross_entropy(logits, target, length, use_cuda=True):
+def masked_cross_entropy(logits, target, length, use_cuda=True, test=False):
     """
     Args:
         logits: A Variable containing a FloatTensor of size
@@ -190,6 +202,8 @@ def masked_cross_entropy(logits, target, length, use_cuda=True):
 #    if shard:
 #        return loss, length.float().sum() # changed it to return loss and length
 
+    if test:
+        return loss # total loss
     if use_cuda:
         return loss / length.cuda().float().sum() # average loss 
     else:

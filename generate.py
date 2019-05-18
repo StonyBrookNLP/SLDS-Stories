@@ -26,12 +26,6 @@ import sys
 import os
 import operator
 
-def check_save_model_path(save_model):
-    save_model_path = os.path.abspath(save_model)
-    model_dirname = os.path.dirname(save_model_path)
-    if not os.path.exists(model_dirname):
-        os.makedirs(model_dirname)
-
         
 def generate(args):
     """
@@ -160,35 +154,45 @@ def generate(args):
     # TODO what all sentences are included?? 
     # calculate NLL
     if args.nll:
-        print("Calculating NLL")
-        nlls = []
+        #print("Calculating NLL")
+        #nlls = []
+        #for n in range(args.nll_samples):
+        #print(f"**{n}**")
+        e_ce = e_kl = 0.0
+        total_num_story = total_num_words = 0
+        for iteration, story in enumerate(story_batches):
+            #if iteration%200 == 0:
+                #print(iteration)
+            batch, seq_lens = story_batches.combine_story(story)
+            targets, target_lens = story_batches.convert_to_target(batch, seq_lens)
+              
+            total_num_words += torch.sum(target_lens).item()
+            total_num_story += 1 # batch_size
+
+            if use_cuda:
+                batch = batch.cuda()
+                targets, targen_lens = targets.cuda(), target_lens.cuda()
+
+            kld_weight = min(0.10, (iteration) / 100000.0)
+            with torch.no_grad():
+                text_logits, state_logits, Z_kl, state_kl = model(batch, seq_lens, gumbel_temp=gumbel_temp)
+            ce_loss_story, kl_story = compute_loss_unsupervised(text_logits, targets, target_lens, Z_kl, state_kl, iteration, kld_weight, use_cuda=use_cuda, do_print=False, test=True)
+
+            e_ce += ce_loss_story.item()
+            e_kl += kl_story.item()  
+
+
+        # stats for nlls so far
+        nll = (e_ce + e_kl) / total_num_story
+        ppl = np.exp((e_ce + e_kl) / total_num_words)
+        #nlls.append(total_loss / data_len) # batch_size is 1
+        #mean, std = np.mean(nlls), np.std(nlls)
+        #print(len(nlls), data_len)
+        print("NLL {:.4f}, PPL {:.4f}, Num story {}, and  Num words".format(nll, ppl, total_num_story, total_num_words))    
         
-        for n in range(args.nll_samples):
-            print(f"**{n}**")
-            total_loss = 0.0
-            for iteration, story in enumerate(story_batches):
-                #if iteration%200 == 0:
-                    #print(iteration)
-                batch, seq_lens = story_batches.combine_story(story)
-                targets, target_lens = story_batches.convert_to_target(batch, seq_lens)
-
-                if use_cuda:
-                    batch = batch.cuda()
-                    targets, targen_lens = targets.cuda(), target_lens.cuda()
-
-                kld_weight = min(0.10, (iteration) / 100000.0)
-                with torch.no_grad():
-                    text_logits, state_logits, Z_kl, state_kl = model(batch, seq_lens, gumbel_temp=gumbel_temp)
-                _, ce_loss = compute_loss_unsupervised(text_logits, targets, target_lens, Z_kl, state_kl, iteration, kld_weight, use_cuda=use_cuda, do_print=False)
-                total_loss += ce_loss.item()
-
-            nlls.append(total_loss / data_len) # batch_size is 1
-            mean, std = np.mean(nlls), np.std(nlls)
-            print(len(nlls), data_len)
-            print("n {} NLL mean {:.4f} and sd {:.4f}".format(n, mean, std))    
-        
-        mean, std = np.mean(nlls), np.std(nlls) 
-        print("**NLL mean {:.4f} and sd {:.4f}".format(mean, std))    
+        # stats for the entire num runs
+        #mean, std = np.mean(nlls), np.std(nlls) 
+        #print("**NLL mean {:.4f} and sd {:.4f}".format(mean, std))    
         exit()
 
     

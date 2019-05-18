@@ -23,11 +23,6 @@ import glob
 import sys
 import os
 
-def tally_parameters(model):
-    n_params = sum([p.nelement() for p in model.parameters()])
-    print('* number of parameters: %d' % n_params)
-
-
 def print_iter_stats(iteration, total_loss, ce_loss, Z_kl, state_kl):
 
 #    if iteration % args.log_every == 0 and iteration != 0:
@@ -35,12 +30,6 @@ def print_iter_stats(iteration, total_loss, ce_loss, Z_kl, state_kl):
         print("Iteration: ", iteration) 
         print("Total: ", total_loss.cpu().data[0])
         print("CE: ", ce_loss.cpu().data[0])
-
-def check_save_model_path(save_model):
-    save_model_path = os.path.abspath(save_model)
-    model_dirname = os.path.dirname(save_model_path)
-    if not os.path.exists(model_dirname):
-        os.makedirs(model_dirname)
 
         
 def train(args):

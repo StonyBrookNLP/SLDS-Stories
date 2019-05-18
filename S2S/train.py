@@ -24,9 +24,7 @@ def get_data_loader(inp_vocab, out_vocab):
     train_loader = BatchIter(train_dataset, args.batch_size, sort_key=lambda x:len(x.text), train=True, sort_within_batch=True, device=-1)
  
     test_loader = None
-    #test_dataset = du.S2SSentenceDataset(args.test_data, inp_vocab, out_vocab)
-    # batch_size is set to 1 
-    #test_loader = BatchIter(test_dataset, 1, sort_key=lambda x:len(x.text), train=False, sort_within_batch=True, device=-1) 
+ 
     return train_loader, test_loader
 
 
@@ -96,12 +94,13 @@ def train(args):
         if (batch_iter+1) % iters_per_epoch ==  0 or (batch_iter + 1) % args.validate_after == 0:
 
             avg_train_loss = train_loss / (batch_iter + 1)             
-            #valid_loss = test(model, test_loader)
-            print("**Epoch {} iteration {} train_loss {:.4f} **".format(c_epoch, batch_iter, avg_train_loss))            
 
-            print("Saving checkpoint.\n")            
-            torch.save(model, "models/{}_e{}_itr{}_l{:.4f}".format(args.expt_name, c_epoch, batch_iter, avg_train_loss))
-            torch.save(optimizer, "models/{}_{}_e{}_itr{}_l{:.4f}".format("optimizer", args.expt_name, c_epoch, batch_iter, avg_train_loss))
+            print("**Epoch {} iteration {} train_loss {:.4f} **".format(c_epoch, batch_iter, avg_train_loss))            
+            
+            if (batch_iter+1) % iters_per_epoch ==  0:
+                print("Saving checkpoint.\n")            
+                torch.save(model, "models/{}_e{}_itr{}_l{:.4f}".format(args.expt_name, c_epoch, batch_iter, avg_train_loss))
+                torch.save(optimizer, "models/{}_{}_e{}_itr{}_l{:.4f}".format("optimizer", args.expt_name, c_epoch, batch_iter, avg_train_loss))
 
         if (batch_iter+1) % iters_per_epoch ==  0:
             c_epoch += 1
@@ -115,7 +114,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='S2SA')  
     parser.add_argument('--train_data', type=str, help="Pass train files for all the tasks.")
-    parser.add_argument('--test_data', type=str, help="Pass test files for all the tasks")
+    #parser.add_argument('--test_data', type=str, help="Pass test files for all the tasks")
     parser.add_argument('--out_vocab', type=str, default="", help='the output vocabulary pickle file')
     parser.add_argument('--emb_size', type=int, default=300, help='size of word embeddings')
     parser.add_argument('--enc_hid_size', type=int, default=512, help='size of encoder hidden')
@@ -132,8 +131,8 @@ if __name__ == "__main__":
     parser.add_argument('--clip', type=float, default=5.0, help='gradient clipping')
     parser.add_argument('--seed', type=int, default=11, help='random seed') 
     parser.add_argument('--cuda', action='store_true', help='use CUDA')
-    parser.add_argument('--src_seq_len', type=int, default=50, help="Maximum source sequence length")
-    parser.add_argument('--max_decode_len', type=int, default=50, help='Maximum prediction length.')
+    #parser.add_argument('--src_seq_len', type=int, default=50, help="Maximum source sequence length")
+    #parser.add_argument('--max_decode_len', type=int, default=50, help='Maximum prediction length.')
     parser.add_argument('--expt_name', type=str, default="new_expt", help='Parent folder under which all files will be created fo rthe expt..')
     parser.add_argument('--load_model', type=str)
     parser.add_argument('--load_opt', type=str)  
