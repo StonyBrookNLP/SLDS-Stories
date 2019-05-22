@@ -1,4 +1,4 @@
-data/
+data/rocstory_vocab_f5.pkl
 __pycache__/
 S2S/__pycache__/
 S2S/models/
@@ -13,3 +13,4 @@ FINAL_MODELS/*
 TURK_DATA/
 refs_test/
 bow_sentiment.py
+*.pkl
