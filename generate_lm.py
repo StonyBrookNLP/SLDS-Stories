@@ -102,7 +102,7 @@ def generate(args):
                 targets, targen_lens = targets.cuda(), target_lens.cuda()
 
             text_logits = model(batch, seq_lens, gumbel_temp=gumbel_temp)
-            ce_loss_story = compute_loss_unsupervised_LM(text_logits, targets, target_lens, iteration, use_cuda=use_cuda, do_print=False, test=False)
+            ce_loss_story = compute_loss_unsupervised_LM(text_logits, targets, target_lens, iteration, use_cuda=use_cuda, do_print=False, test=True)
 
             total_loss += ce_loss_story.item()
 

@@ -2,7 +2,7 @@
 # code for S2S inference
 ########
 import sys
-sys.path.append('../')
+sys.path.append('/home/lshekhar/SLDS-Stories/')
 import random
 import numpy as np
 import argparse
@@ -27,7 +27,7 @@ def generate(args):
     eos_id = out_vocab.stoi[EOS_TOK]
      
     # EXPLICITLY skip the header in val
-    test_dataset = du.S2SSentenceDataset(args.valid_data, inp_vocab, out_vocab, skip_header=True) 
+    test_dataset = du.S2SSentenceDataset(args.valid_data, inp_vocab, out_vocab, skip_header=False) #made it false on 19th
     # batch_size is set to 1 rather than args.batch_size
     test_loader = BatchIter(test_dataset, 1, sort_key=lambda x:len(x.text), train=False, sort_within_batch=True, device=-1)  
     data_len = len(test_dataset)
@@ -39,6 +39,7 @@ def generate(args):
     model.eval()
 
     if args.nll:
+        print("RUNNING NLL")
         total_loss = 0.0
         total_num_story = total_num_words = 0
         for batch_iter, batch in enumerate(test_loader): 
@@ -55,7 +56,7 @@ def generate(args):
             total_loss += loss.item()
         nll = total_loss / total_num_story
         ppl = np.exp(total_loss / total_num_words)
-        print("NLL {:.4f} {:.4f} Num story {}, data_len {}, and Num words {}".format(nll, ppl, total_num_story, data_len, total_num_words))
+        print("NLL {:.2f} PPL {:.2f} Num story {}, data_len {}, and Num words {}".format(nll, ppl, total_num_story, data_len, total_num_words))
 
         exit()
 
@@ -78,7 +79,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='S2S')
     parser.add_argument('--load_model', type=str)
     parser.add_argument('--valid_data', type=str)
-    parser.add_argument('--out_vocab', type=str, help='the output vocabulary pickle file', default='../data/rocstory_vocab_f5.pkl') 
+    parser.add_argument('--out_vocab', type=str, help='the output vocabulary pickle file', default='/home/lshekhar/SLDS-Stories/data/rocstory_vocab_f5.pkl') 
     parser.add_argument('--seed', type=int, default=11, help='random seed') 
     parser.add_argument('--cuda', action='store_true', help='use CUDA')
     parser.add_argument('--nll', action='store_true', help='calculate NLL')

@@ -5,16 +5,16 @@ import spacy
 r_ref_path = sys.argv[1]
 if "test_ALL_val.csv" in r_ref_path:
     print("VALIDATION DATASET")
-    w_ref_path1 = "refs_val/references_2.txt"
-    w_ref_path2 = "refs_val/references_4.txt"
-    w_ref_path3 = "refs_val/references_1_2.txt"
-    w_ref_path4 = "refs_val/references_3_4.txt"
+    w_ref_path1 = "../refs_val/references_2.txt"
+    w_ref_path2 = "../refs_val/references_4.txt"
+    w_ref_path3 = "../refs_val/references_1_2.txt"
+    w_ref_path4 = "../refs_val/references_3_4.txt"
 else:
     print("TEST DATASET")
-    w_ref_path1 = "refs_test/references_2.txt"
-    w_ref_path2 = "refs_test/references_4.txt"
-    w_ref_path3 = "refs_test/references_1_2.txt"
-    w_ref_path4 = "refs_test/references_3_4.txt"   
+    w_ref_path1 = "../refs_test/references_2.txt"
+    w_ref_path2 = "../refs_test/references_4.txt"
+    w_ref_path3 = "../refs_test/references_1_2.txt"
+    w_ref_path4 = "../refs_test/references_3_4.txt"   
 
 nlp = spacy.load('en')
 

@@ -83,7 +83,7 @@ def generate(args):
     # do ncloze test
     if args.cloze:
         print("Doing NCLOZE")
- 
+        """ 
         targets = []
         results = []
         for x in range(data_len): 
@@ -148,10 +148,10 @@ def generate(args):
             if t == max_key:
                 accuracy += 1
         print("**Accuracy {}/{} = {:.4f}".format(accuracy, data_len, accuracy/data_len))
+        """
         exit()
     
-
-    # TODO what all sentences are included?? 
+ 
     # calculate NLL
     if args.nll:
         #print("Calculating NLL")
@@ -175,7 +175,14 @@ def generate(args):
 
             kld_weight = min(0.10, (iteration) / 100000.0)
             with torch.no_grad():
-                text_logits, state_logits, Z_kl, state_kl = model(batch, seq_lens, gumbel_temp=gumbel_temp)
+                #if args.kvae:
+                    #state_labels = torch.zeros(5, 1, 1).long()
+                    #if use_cuda:
+                        #state_labels = state_labels.cuda()
+                #else:
+                    #state_labels = None
+
+                text_logits, state_logits, Z_kl, state_kl = model(batch, seq_lens, gumbel_temp=gumbel_temp)#, state_labels=state_labels)
             ce_loss_story, kl_story = compute_loss_unsupervised(text_logits, targets, target_lens, Z_kl, state_kl, iteration, kld_weight, use_cuda=use_cuda, do_print=False, test=True)
 
             e_ce += ce_loss_story.item()
@@ -188,8 +195,8 @@ def generate(args):
         #nlls.append(total_loss / data_len) # batch_size is 1
         #mean, std = np.mean(nlls), np.std(nlls)
         #print(len(nlls), data_len)
-        print("NLL {:.4f}, PPL {:.4f}, Num story {}, and  Num words".format(nll, ppl, total_num_story, total_num_words))    
-        
+        print("NLL {:.2f}, PPL {:.2f}, Num story {}, and  Num words {}".format(nll, ppl, total_num_story, total_num_words))    
+        sys.stdout.flush()        
         # stats for the entire num runs
         #mean, std = np.mean(nlls), np.std(nlls) 
         #print("**NLL mean {:.4f} and sd {:.4f}".format(mean, std))    
@@ -231,6 +238,7 @@ if __name__ == "__main__":
     parser.add_argument('--nll_samples', type=int, default=100, help="Num samples for approximating NLL")
     parser.add_argument('--cloze', action='store_true', help='Perform ncloze test')
     parser.add_argument('--cloze_samples', type=int, default=25, help='Num samples for cloze')
+    #parser.add_argument('--kvae', action='store_true', help='Kalman VAE')
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)

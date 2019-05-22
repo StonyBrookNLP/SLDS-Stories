@@ -30,7 +30,7 @@ def compute_loss_unsupervised_LM(text_logits, text_targets, target_lens, iterati
         ce_loss = Variable(torch.Tensor([0]))
 
     for i in range(num_sents):
-        ce_loss += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda)
+        ce_loss += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda, test=test)
 
     #nll calculation
     if test:
@@ -68,16 +68,16 @@ def compute_loss_unsupervised(text_logits, text_targets, target_lens, Z_kl, stat
         ce_loss = Variable(torch.Tensor([0]))
 
     # used this in ncloze
-    if last_loss:
-        last_ce_loss = masked_cross_entropy(text_logits[4], text_targets[4], target_lens[4], use_cuda=use_cuda)
-        return last_ce_loss
+    #if last_loss:
+        #last_ce_loss = masked_cross_entropy(text_logits[4], text_targets[4], target_lens[4], use_cuda=use_cuda)
+        #return last_ce_loss
 
     # used in nll calculation
     if test: 
         assert test, "test arg must be True when calculating NLL."
         for i in range(num_sents):
-            ce_loss_story += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda, test=True)   
-        return  ce_loss_story, torch.sum(Z_kl) # both story level
+            ce_loss += masked_cross_entropy(text_logits[i], text_targets[i], target_lens[i], use_cuda=use_cuda, test=True)   
+        return  ce_loss, torch.sum(Z_kl) # both story level
 
 
     for i in range(num_sents):

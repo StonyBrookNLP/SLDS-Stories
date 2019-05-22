@@ -353,6 +353,7 @@ class RocStoryDataset(ttdata.Dataset):
                 #Line format is id, title, sent1, sent2, sent3, sent4, sent5
                 for i, line in enumerate(csv_file):
                     if i == 0:
+                        print("SKIPPING THE HEADER")
                         continue
                     
                     if not test:
