@@ -17,7 +17,7 @@ from data_utils import EOS_TOK, SOS_TOK, PAD_TOK, transform
 
 
 class LM(nn.Module):
-    def __init__(self, hidden_size, rnn_hidden_size, embd_size, vocab, trans_matrix, layers=1, pretrained=False, dropout=0.0, use_cuda=False):
+    def __init__(self, hidden_size, rnn_hidden_size, embd_size, vocab, trans_matrix, layers=2, pretrained=False, dropout=0.0, use_cuda=False):
             """
             Args:
                 hidden_size (int) : size of hidden vector z 
