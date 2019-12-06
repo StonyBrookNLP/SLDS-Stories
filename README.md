@@ -1,4 +1,4 @@
-Code for Storytelling in a Switching Dynamical System for EMNLP-IJCNLP 2019 submission.
+Code for Storytelling in a Switching Dynamical System for ACL 2020 submission.
 
 Structure:
 
