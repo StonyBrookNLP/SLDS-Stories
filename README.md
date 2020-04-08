@@ -1,4 +1,4 @@
-Code for Storytelling in a Switching Dynamical System for ACL 2020 submission.
+Code for Generating Narrative Text in a Switching Dynamical System
 
 Structure:
 
